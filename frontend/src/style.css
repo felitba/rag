@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;1,500;1,600&display=swap');
+
+:root {
+  font-family: 'DM Sans', sans-serif;
+  color: #25231f;
+  background: #f7f4ef;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --muted: #77736d;
+  --line: #e2ddd4;
+  --accent: #50634f;
+  --paper: #fffdf9;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input { font: inherit; }
+.page-shell { width: min(1180px, calc(100% - 44px)); margin: 0 auto; }
+.site-header { height: 82px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+.brand { color: #25231f; text-decoration: none; font-size: 13px; font-weight: 700; letter-spacing: .11em; display: flex; align-items: center; gap: 10px; }
+.brand em { font-family: 'Playfair Display', serif; font-weight: 500; letter-spacing: .04em; }
+.brand-mark { display: grid; place-items: center; width: 31px; height: 31px; border: 1px solid #25231f; border-radius: 50%; font-family: 'Playfair Display', serif; font-size: 18px; font-weight: 500; }
+.header-note { color: var(--muted); font-size: 12px; }
+.hero { padding: 76px 0 54px; max-width: 720px; }
+.eyebrow { font-size: 10px; letter-spacing: .17em; color: var(--accent); font-weight: 700; margin: 0 0 14px; }
+h1, h2, h3, p { margin-top: 0; }
+h1 { font-family: 'Playfair Display', serif; font-weight: 500; font-size: clamp(42px, 6vw, 70px); letter-spacing: -.045em; line-height: 1.04; margin-bottom: 22px; }
+h1 i { color: var(--accent); font-weight: 500; }
+.hero-copy { max-width: 510px; color: var(--muted); font-size: 15px; line-height: 1.75; margin-bottom: 0; }
+.upload-panel { background: var(--paper); border: 1px solid var(--line); display: grid; grid-template-columns: 1fr .8fr; gap: 44px; padding: clamp(22px, 4vw, 48px); }
+.upload-copy { align-self: center; }
+h2 { font-family: 'Playfair Display', serif; font-size: 29px; font-weight: 500; letter-spacing: -.025em; margin-bottom: 12px; }
+.upload-copy > p:not(.eyebrow) { color: var(--muted); font-size: 13px; line-height: 1.6; max-width: 400px; }
+form { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin-top: 24px; }
+.file-picker { border: 1px dashed #c7c1b6; width: 100%; max-width: 390px; padding: 14px 16px; display: flex; align-items: center; gap: 12px; font-size: 13px; cursor: pointer; transition: border-color .2s; overflow-wrap: anywhere; }
+.file-picker:hover { border-color: var(--accent); }
+.file-picker input { display: none; }
+.file-picker-icon { font-size: 22px; color: var(--accent); line-height: 1; }
+.submit-button { border: 0; background: #2d382d; color: white; padding: 14px 19px; min-height: 47px; display: flex; gap: 10px; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; font-weight: 600; transition: background .2s; }
+.submit-button:hover:not(:disabled) { background: #435843; }
+.submit-button:disabled { opacity: .55; cursor: not-allowed; }
+.file-hint { font-size: 10px; color: #89847d; margin: 0; }
+.preview { background: #f2eee7; min-height: 320px; max-height: 450px; display: grid; place-items: center; overflow: hidden; }
+.preview img { height: 100%; width: 100%; object-fit: contain; max-height: 450px; }
+.preview-placeholder { display: flex; flex-direction: column; align-items: center; gap: 10px; color: #9c968b; font-size: 12px; }
+.hanger { font-size: 64px; line-height: 1; font-family: 'Playfair Display', serif; transform: rotate(180deg); }
+.spinner { width: 14px; height: 14px; border: 2px solid #ffffff66; border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.error-message { margin: 13px 0 0; font-size: 12px; color: #a3332c; }
+.results-section { padding: 76px 0 30px; }
+.section-heading { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 24px; }
+.section-heading h2 { margin-bottom: 0; }
+.result-count { font-size: 11px; color: var(--muted); padding-bottom: 5px; }
+.explanation { display: flex; gap: 14px; padding: 20px 22px; background: #eeeee5; margin-bottom: 28px; align-items: flex-start; }
+.explanation-mark { color: var(--accent); font-size: 20px; }
+.explanation p { font-size: 13px; line-height: 1.75; margin: 0; white-space: pre-wrap; }
+.outfit-list { display: grid; grid-template-columns: 1fr; gap: 22px; }
+.outfit-card { background: var(--paper); border: 1px solid var(--line); padding: 22px; }
+.outfit-card-heading { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 18px; }
+.outfit-card-heading .eyebrow { margin-bottom: 7px; }
+h3 { text-transform: capitalize; font-family: 'Playfair Display', serif; font-weight: 500; font-size: 23px; margin-bottom: 0; }
+.outfit-tag { color: var(--accent); background: #eef0e9; padding: 6px 9px; font-size: 10px; white-space: nowrap; }
+.garment-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.garment-card { min-width: 0; }
+.garment-image-wrap { background: #f0ede7; aspect-ratio: 3 / 4; overflow: hidden; }
+.garment-image-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .3s; }
+.garment-card:hover img { transform: scale(1.025); }
+.garment-info { padding-top: 10px; }
+.garment-category { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+.garment-info p { color: var(--muted); font-size: 12px; margin: 5px 0; }
+.garment-info strong { font-size: 12px; font-weight: 600; }
+.empty-state { padding: 28px; background: var(--paper); color: var(--muted); font-size: 13px; border: 1px solid var(--line); }
+footer { border-top: 1px solid var(--line); margin-top: 70px; padding: 23px 0 30px; display: flex; justify-content: space-between; gap: 20px; color: var(--muted); font-size: 10px; }
+footer span:first-child { letter-spacing: .14em; color: #343a31; font-weight: 700; }
+
+@media (max-width: 740px) {
+  .page-shell { width: min(100% - 28px, 560px); }
+  .site-header { height: 68px; }
+  .header-note { display: none; }
+  .hero { padding: 53px 0 35px; }
+  .upload-panel { grid-template-columns: 1fr; gap: 26px; padding: 22px; }
+  .preview { min-height: 240px; max-height: 350px; }
+  .garment-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 12px; }
+  .outfit-card { padding: 16px; }
+  .results-section { padding-top: 55px; }
+  footer { flex-direction: column; }
+}

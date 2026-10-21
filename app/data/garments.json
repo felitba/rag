@@ -1,0 +1,74 @@
+[
+  {
+    "garment_id": "jacket_104",
+    "image_path": "catalog/garments/jacket_104.jpg",
+    "category": "jacket",
+    "color": "black",
+    "style": "streetwear",
+    "price": 89.99,
+    "available": true
+  },
+  {
+    "garment_id": "shirt_025",
+    "image_path": "catalog/garments/shirt_025.jpg",
+    "category": "shirt",
+    "color": "white",
+    "style": "casual",
+    "price": 29.99,
+    "available": true
+  },
+  {
+    "garment_id": "jeans_083",
+    "image_path": "catalog/garments/jeans_083.jpg",
+    "category": "jeans",
+    "color": "blue",
+    "style": "casual",
+    "price": 49.99,
+    "available": true
+  },
+  {
+    "garment_id": "shoes_011",
+    "image_path": "catalog/garments/shoes_011.jpg",
+    "category": "sneakers",
+    "color": "white",
+    "style": "streetwear",
+    "price": 59.99,
+    "available": true
+  },
+  {
+    "garment_id": "jacket_108",
+    "image_path": "catalog/garments/jacket_108.jpg",
+    "category": "jacket",
+    "color": "beige",
+    "style": "minimal",
+    "price": 99.99,
+    "available": true
+  },
+  {
+    "garment_id": "shirt_041",
+    "image_path": "catalog/garments/shirt_041.jpg",
+    "category": "shirt",
+    "color": "cream",
+    "style": "minimal",
+    "price": 34.99,
+    "available": true
+  },
+  {
+    "garment_id": "jeans_092",
+    "image_path": "catalog/garments/jeans_092.jpg",
+    "category": "jeans",
+    "color": "dark blue",
+    "style": "smart casual",
+    "price": 54.99,
+    "available": true
+  },
+  {
+    "garment_id": "shoes_036",
+    "image_path": "catalog/garments/shoes_036.jpg",
+    "category": "shoes",
+    "color": "brown",
+    "style": "minimal",
+    "price": 69.99,
+    "available": true
+  }
+]
