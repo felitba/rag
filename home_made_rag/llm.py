@@ -47,6 +47,7 @@ class LLM:
             "price": item.get("price"),
         }
 
+    # TODO: lets define this. 
     def _build_messages(self, payload: dict[str, Any]) -> list[Any]:
         user_image = Path(payload["user_image_path"])
         outfits = payload["outfits"]
