@@ -27,8 +27,8 @@ from app.config import (
     CATALOG_PATH,
 )
 from app.services.catalog_service import CatalogService
-from app.services.chroma_service import ChromaService
-from app.services.clip_service import ClipService
+from chroma_db import ChromaService
+from embedding import ClipEmbedding
 from app.services.openai_service import OpenAIRecommendationService
 from app.services.outfit_service import OutfitService
 
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     catalog = CatalogService(PROJECT_ROOT)
 
     logger.info("Cargando CLIP (%s)...", CLIP_MODEL)
-    clip_service = ClipService(model_name=CLIP_MODEL)
+    clip_service = ClipEmbedding(model_name=CLIP_MODEL)
 
     chroma_service = ChromaService(
         persist_directory=CHROMA_PATH,

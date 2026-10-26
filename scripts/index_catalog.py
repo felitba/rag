@@ -9,8 +9,8 @@ sys.path.insert(0, str(ROOT))
 
 from app.config import CHROMA_PATH, CLIP_MODEL, COLLECTION_NAME  # noqa: E402
 from app.services.catalog_service import CatalogService  # noqa: E402
-from app.services.chroma_service import ChromaService  # noqa: E402
-from app.services.clip_service import ClipService  # noqa: E402
+from chroma_db import ChromaDB  # noqa: E402
+from embedding import ClipEmbedding  # noqa: E402
 
 
 def main() -> None:
@@ -26,15 +26,10 @@ def main() -> None:
                 outfits_by_garment[garment_id].append(outfit_id)
 
     print(f"Cargando CLIP ({CLIP_MODEL})...")
-    clip_service = ClipService(model_name=CLIP_MODEL)
+    clip_service = ClipEmbedding(model_name=CLIP_MODEL)
 
     print("Reconstruyendo colección ChromaDB...")
-    chroma_service = ChromaService(
-        persist_directory=CHROMA_PATH,
-        collection_name=COLLECTION_NAME,
-        clip_service=clip_service,
-        reset_collection=True,
-    )
+    chroma_service = ChromaDB()
 
     for index, garment in enumerate(catalog.garments_list, start=1):
         image_path = catalog.resolve_image_path(garment["image_path"])

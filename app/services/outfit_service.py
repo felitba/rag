@@ -5,15 +5,15 @@ from pathlib import Path
 from typing import Any
 
 from app.services.catalog_service import CatalogService
-from app.services.chroma_service import ChromaService
-from app.services.clip_service import ClipService
+from chroma_db import ChromaService
+from embedding import ClipEmbedding
 
 
 class OutfitService:
     def __init__(
         self,
         catalog: CatalogService,
-        clip_service: ClipService,
+        clip_service: ClipEmbedding,
         chroma_service: ChromaService,
     ) -> None:
         self.catalog = catalog

@@ -7,7 +7,7 @@ import torch
 from PIL import Image, ImageOps
 
 
-class ClipService:
+class ClipEmbedding:
     """Loads OpenAI CLIP once and creates normalized image embeddings."""
 
     def __init__(self, model_name: str = "ViT-B/32") -> None:
@@ -18,6 +18,7 @@ class ClipService:
         )
         self.model.eval()
 
+    # TODO: change this...?
     def embed_image(self, image_path: str | Path) -> list[float]:
         path = Path(image_path)
         if not path.is_file():

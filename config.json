@@ -1,0 +1,50 @@
+
+{
+  "project": {
+    "name": "fashion-rag",
+    "environment": "development",
+    "log_level": "DEBUG",
+    "log_file": "logs/fashion_rag.log"
+  },
+  "dataset": {
+    "huggingface_id": "mvasil/polyvore-outfits",
+    "configuration": "nondisjoint",
+    "split": "train",
+    "local_data_dir": "data",
+    "images_dir": "data/images",
+    "items_file": "data/catalog_items.jsonl",
+    "outfits_file": "data/outfits.json"
+  },
+  "embeddings": {
+    "provider": "clip",
+    "model_name": "ViT-B/32",
+    "device": "auto",
+    "normalize_embeddings": true,
+    "batch_size": 32
+  },
+  "vector_store": {
+    "provider": "chroma",
+    "persist_directory": "chroma_db",
+    "collection_name": "fashion_items",
+    "distance_metric": "cosine",
+    "top_k": 10
+  },
+  "retrieval": {
+    "max_outfits": 5,
+    "deduplicate_outfits": true,
+    "exclude_query_item": true,
+    "minimum_similarity": null
+  },
+  "llm": {
+    "provider": "ollama",
+    "model_name": "qwen2.5:7b",
+    "temperature": 0.2,
+    "base_url": "http://localhost:11434",
+    "max_recommendations": 5
+  },
+  "api": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "reload": true
+  }
+}
