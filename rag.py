@@ -1,41 +1,21 @@
-import langchain
-import os
-import logging
-from pathlib import Path
-from dotenv import load_dotenv, find_dotenv
-from chroma_db import ChromaDB
-from config import CONFIG
-from embedding import ClipEmbedding
 
 
-# -------------- Logger set up -------------- #
+class RAG:
+    def __init__(self,embedding_function, model, chroma_db):
+        self.embedding_function = embedding_function
+        self.model = model
+        self.chroma_db = chroma_db
 
-PROJECT_DIR = Path(__file__).resolve().parent.parent
-LOG_FILE = PROJECT_DIR / "Orag.log"
+    def retrieve(self, query):
+        query_embedding = self.embedding_function.embed_image(query)
+        retrieved_documents = self.chroma_db.retrieve(query_embedding)
 
-_ = load_dotenv(find_dotenv())
+        # TODO: implement 1.get outfits 2. pass it to the model
 
-logging.basicConfig(level=logging.DEBUG,
-                    format='[%(levelname)s] - %(message)s ',
-                    handlers=[
-                            logging.FileHandler(LOG_FILE, mode='w', encoding='utf-8'),
-                            logging.StreamHandler(),
-                    ],
-                    force=True)
-logger = logging.getLogger(__name__)
-logger.info("Langchain Demo Initialized")
+        return retrieved_documents
 
-# --------------Data preprocessing and loading-------------- #
+    def generate_response(self, retrieved_documents):
 
-
-
-# --------------Db set up -------------- #
-
-chroma_db = ChromaDB()
-
-# --------------Embedding set up -------------- #
-
-embedding_function = ClipEmbedding(model_name=CONFIG["embeddings"]["model_name"])
-
-# --------------Data Insertion -------------- #
-
+        response = self.model.generate_response(retrieved_documents)
+        return response
+    

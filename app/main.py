@@ -29,7 +29,7 @@ from app.config import (
 from app.services.catalog_service import CatalogService
 from chroma_db import ChromaService
 from embedding import ClipEmbedding
-from app.services.openai_service import OpenAIRecommendationService
+from llm import OpenAIRecommendationService
 from app.services.outfit_service import OutfitService
 
 logging.basicConfig(level=logging.INFO)

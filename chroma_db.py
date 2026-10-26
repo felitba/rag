@@ -27,7 +27,7 @@ class ChromaDB:
             metadatas=[metadata],
         )
 
-    def search(self, embedding, top_k=None):
+    def retrieve(self, embedding, top_k=None):
         if top_k is None:
             top_k = CONFIG["vector_store"]["top_k"]
 

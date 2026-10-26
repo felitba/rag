@@ -13,7 +13,7 @@ from langchain_core.runnables import RunnableLambda
 from langchain_openai import ChatOpenAI
 
 
-class OpenAIRecommendationService:
+class LLM:
     """Uses a vision-capable OpenAI model through LangChain to explain retrieved looks."""
 
     def __init__(
