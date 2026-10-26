@@ -3,16 +3,16 @@ import os
 import logging
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
-from chroma_db import ChromaDB
-from config import CONFIG
-from embedding import ClipEmbedding
+from home_made_rag.chroma_db import ChromaDB
+from home_made_rag.config import CONFIG
+from home_made_rag.embedding import ClipEmbedding
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from llm import LLM
-from rag import RAG
-import rag
+from home_made_rag.llm import LLM
+from home_made_rag.rag import RAG
+import home_made_rag.rag as rag
 
 
 @asynccontextmanager

@@ -9,8 +9,8 @@ sys.path.insert(0, str(ROOT))
 
 from app.config import CHROMA_PATH, CLIP_MODEL, COLLECTION_NAME  # noqa: E402
 from app.services.catalog_service import CatalogService  # noqa: E402
-from chroma_db import ChromaDB  # noqa: E402
-from embedding import ClipEmbedding  # noqa: E402
+from home_made_rag.chroma_db import ChromaDB  # noqa: E402
+from home_made_rag.embedding import ClipEmbedding  # noqa: E402
 
 
 def main() -> None:

@@ -1,6 +1,6 @@
 import chromadb
 
-from config import CONFIG, PROJECT_DIR
+from home_made_rag.config import CONFIG, PROJECT_DIR
 
 
 class ChromaDB:

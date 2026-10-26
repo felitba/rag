@@ -27,10 +27,9 @@ from app.config import (
     CATALOG_PATH,
 )
 from app.services.catalog_service import CatalogService
-from chroma_db import ChromaService
-from embedding import ClipEmbedding
-from llm import OpenAIRecommendationService
-from app.services.outfit_service import OutfitService
+from home_made_rag.chroma_db import ChromaService
+from home_made_rag.embedding import ClipEmbedding
+from home_made_rag.llm import OpenAIRecommendationService
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("fashion_rag")
