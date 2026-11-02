@@ -11,11 +11,10 @@ node_modules/
 frontend/dist/
 docs/implementation_guide.md
 docs/polyvore_dataset_and_preparation.md
+Orag.log
 
 # Polyvore: imágenes y catálogo regenerables
-/data/images
-/data/catalog_items.jsonl
-/data/outfits_preview.html
+/data/
 
 # Base vectorial y logs
 /chroma_db/

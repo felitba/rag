@@ -16,7 +16,6 @@ from home_made_rag.config import (
     IMAGES_DIR,
     ITEMS_FILE,
     OUTFITS_FILE,
-    ROOT_DIR,
 )
 
 def download_json(filename):

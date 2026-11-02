@@ -6,17 +6,20 @@ from collections.abc import Iterable
 import clip
 import torch
 from PIL import Image, ImageOps
+from home_made_rag.config import CONFIG
 
 
 class ClipEmbedding:
     """Loads OpenAI CLIP once and creates normalized image and text embeddings."""
 
-    def __init__(self, model_name: str = "ViT-B/32") -> None:
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+    def __init__(self, model_name: str | None = None, device: str | None=None) -> None:
+        settings = CONFIG["embeddings"]
+        self.device = self._pick_device(device or settings["device"])
         self.model, self.preprocess = clip.load(
-            model_name,
+            model_name or settings["model_name"],
             device=self.device,
         )
+        self.model.float()
         self.model.eval()
 
     def embed_image(self, image_path: str | Path) -> list[float]:
@@ -55,3 +58,13 @@ class ClipEmbedding:
             features = features / features.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
         return features.cpu().float().tolist()[0]
+    
+    @staticmethod
+    def _pick_device(requested: str) -> str:
+        if requested != "auto":
+            return requested
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"

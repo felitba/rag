@@ -71,9 +71,3 @@ class ChromaDB:
             name=CONFIG["vector_store"]["collection_name"]
         )
         self.collection = self._get_collection()
-
-def __init__(self):
-    self.client = chromadb.PersistentClient(
-        path=str(CHROMA_DIR)
-    )
-    self.collection = self._get_collection()

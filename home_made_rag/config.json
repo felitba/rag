@@ -27,7 +27,7 @@
     "persist_directory": "chroma_db",
     "collection_name": "fashion_items",
     "distance_metric": "cosine",
-    "top_k": 10
+    "top_k": 30
   },
   "retrieval": {
     "max_outfits": 5,
@@ -36,8 +36,8 @@
     "minimum_similarity": null
   },
   "llm": {
-    "provider": "ollama",
-    "model_name": "qwen2.5:7b",
+    "provider": "openai",
+    "model_name": "gpt-4.1-mini",
     "temperature": 0.2,
     "base_url": "http://localhost:11434",
     "max_recommendations": 5
