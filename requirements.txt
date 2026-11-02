@@ -8,4 +8,5 @@ langchain-core>=1.0.0
 langchain-chroma>=1.0.0
 langchain-openai>=1.0.0
 torch>=2.2.0
+clip @ git+https://github.com/openai/CLIP.git
 datasets
