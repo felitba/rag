@@ -9,3 +9,14 @@ storage/uploads/*
 .DS_Store
 node_modules/
 frontend/dist/
+docs/implementation_guide.md
+docs/polyvore_dataset_and_preparation.md
+
+# Polyvore: imágenes y catálogo regenerables
+/data/images
+/data/catalog_items.jsonl
+/data/outfits_preview.html
+
+# Base vectorial y logs
+/chroma_db/
+/logs/
