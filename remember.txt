@@ -1,6 +1,0 @@
-Token is valid.
-The token `oauth-clee0412` has been saved to /Users/camila/.cache/huggingface/stored_tokens
-Your token has been saved to /Users/camila/.cache/huggingface/token
-Login successful.
-The current active token is: `oauth-clee0412`
-Note: This token will be refreshed automatically when it expires.
