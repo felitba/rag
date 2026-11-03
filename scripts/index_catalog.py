@@ -1,55 +1,47 @@
-from __future__ import annotations
-
 import sys
-from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR))
 
-from app.config import CHROMA_PATH, CLIP_MODEL, COLLECTION_NAME  # noqa: E402
-from app.services.catalog_service import CatalogService  # noqa: E402
-from home_made_rag.chroma_db import ChromaDB  # noqa: E402
-from home_made_rag.embedding import ClipEmbedding  # noqa: E402
+from home_made_rag.catalog import Catalog
+from home_made_rag.chroma_db import ChromaDB
+from home_made_rag.config import CONFIG
+from home_made_rag.embedding import ClipEmbedding
 
-
-def main() -> None:
-    catalog = CatalogService(ROOT)
-
-    # Validate all references/images before resetting the existing index.
-    catalog.validate_image_files()
-
-    outfits_by_garment: dict[str, list[str]] = defaultdict(list)
-    for outfit_id, garment_ids in catalog.outfits.items():
-        for garment_id in garment_ids:
-            if outfit_id not in outfits_by_garment[garment_id]:
-                outfits_by_garment[garment_id].append(outfit_id)
-
-    print(f"Cargando CLIP ({CLIP_MODEL})...")
-    clip_service = ClipEmbedding(model_name=CLIP_MODEL)
-
-    print("Reconstruyendo colección ChromaDB...")
-    chroma_service = ChromaDB()
-
-    for index, garment in enumerate(catalog.garments_list, start=1):
-        image_path = catalog.resolve_image_path(garment["image_path"])
-        outfit_ids = outfits_by_garment.get(garment["garment_id"], [])
-
-        chroma_service.index_garment(
-            garment=garment,
-            image_path=image_path,
-            outfit_ids=outfit_ids,
+def main():
+    # load and validate catalog
+    catalog = Catalog()
+    catalog.validate_images()
+    item_ids = list(catalog.items)
+    print(f"Catalog OK: {len(item_ids)} items, {len(catalog.outfits)} outfits")
+    
+    # load CLIP
+    clip_model = ClipEmbedding()
+    print(f"CLIP loaded on {clip_model.device}")
+    
+    chroma = ChromaDB()
+    chroma.reset()
+    
+    batch_size = CONFIG["embeddings"]["batch_size"]
+    
+    for start in range(0, len(item_ids), batch_size):
+        batch_ids = item_ids[start:start + batch_size]
+        paths = [catalog.image_path(item_id) for item_id in batch_ids]
+        
+        chroma.add_batch(
+            ids=batch_ids,
+            embeddings=clip_model.embed_images(paths),
+            metadatas=[catalog.metadata(item_id) for item_id in batch_ids],
+            documents=[catalog.document(item_id) for item_id in batch_ids],
         )
-        print(
-            f"[{index}/{len(catalog.garments_list)}] "
-            f"Indexada {garment['garment_id']} -> {outfit_ids}"
-        )
-
-    print(
-        f"Indexación terminada. Colección '{COLLECTION_NAME}': "
-        f"{chroma_service.count()} prendas."
-    )
-
+        print(f"[{start + len(batch_ids)}/{len(item_ids)}] indexed")
+        
+    total = chroma.count()
+    if total != len(item_ids):
+        raise SystemExit(f"Count mismatch: Chroma has {total}, catalog has {len(item_ids)}")
+    
+    print(f"Done. Collection has {total} items")
 
 if __name__ == "__main__":
     main()

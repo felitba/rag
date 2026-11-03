@@ -91,5 +91,20 @@ class Catalog:
         item_ids = self.outfits[outfit_id]
         return [self.items[item_id] for item_id in item_ids]
     
+    def document(self, item_id: str) -> str:
+        item = self.items[item_id]
+        parts = [
+            (item.get("title") or "").strip(),
+            (item.get("description") or "").strip(),
+        ]
+        text = ". ".join(part for part in parts if part)
+        return text or item["category"]
     
+    def metadata(self, item_id:str) -> dict:
+        item = self.items[item_id]
+        return {
+            "category": item["category"],
+            "image_path": item["image_path"],
+            "outfit_ids_json": json.dumps(self.outfits_by_item[item_id])
+        }
     

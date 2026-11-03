@@ -5,6 +5,7 @@ from home_made_rag.config import CONFIG, CHROMA_DIR
 
 class ChromaDB:
     def __init__(self):
+        self.client = chromadb.PersistentClient(path=str(CHROMA_DIR))
         self.collection = self._get_collection()
 
     def retrieve(self, embedding, top_k=None, where=None):
