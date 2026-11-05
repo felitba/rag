@@ -1,24 +1,34 @@
-import langchain
-import os
-import logging
-from pathlib import Path
-from dotenv import load_dotenv, find_dotenv
-from home_made_rag.chroma_db import ChromaDB
-from home_made_rag.config import CONFIG
-from home_made_rag.embedding import ClipEmbedding
+import tempfile
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
+import logging
+from dotenv import load_dotenv, find_dotenv
 
-from home_made_rag.llm import LLM
+
+from fastapi import FastAPI, Request, UploadFile, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from home_made_rag.catalog import Catalog
+from home_made_rag.chroma_db import ChromaDB
+from home_made_rag.config import IMAGES_DIR
+from home_made_rag.embedding import ClipEmbedding
 from home_made_rag.rag import RAG
-import home_made_rag.rag as rag
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    
     # 1. Startup: execute once when the app starts
     print("Starting application...")
+    
+    # 2. Basic setup
+        
+    catalog = Catalog()
+    embedding = ClipEmbedding()
+    chroma = ChromaDB()
+    app.state.rag = RAG(embedding, None, chroma, catalog)
+    print(f"Listo. Prendas indexadas: {chroma.count()}")
 
     # -------------- Logger set up -------------- #
 
@@ -36,52 +46,50 @@ async def lifespan(app: FastAPI):
                         force=True)
     logger = logging.getLogger(__name__)
     logger.info("Langchain Demo Initialized")
-
-
-    # --------------TODO: Data preprocessing and loading-------------- #
-
-
-
-    # --------------Db set up -------------- #
-
-    chroma_db = ChromaDB()
-
-    # --------------Embedding set up -------------- #
-
-    embedding_function = ClipEmbedding(model_name=CONFIG["embeddings"]["model_name"])
-
-    # -------------- TODO : Data Insertion -------------- #
-
-
-    # -------------- TODO : LLM set up (openAI API Key set up missing) -------------- #
-    
-    model  = LLM()
-
-    # --------------RAG set up -------------- #
-    app.state.rag = RAG(embedding_function, model, chroma_db)
     
     yield
-
-    # 2. Shutdown: execute when the app stops
-    print("Shutting down application...")
-
-# ------------- API set up -------------- #
 
 app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
-    allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+    
+app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images") #  makes data/images/123.jpg available at http://localhost:8000/images/123.jpg
+
+@app.get("/health")
+def health(request: Request):
+    return {"status": "ok", "indexed_garments": request.app.state.rag.chroma.count()}
 
 # ------------- user prompt receive -------------- #
-@app.get("/recommendations")
-async def get_recommendations(user_prompt: str):
-    # 1. Process the user prompt and generate recommendations
-    recommendations = app.state.rag.retrieve(user_prompt).generate_response()
+@app.post("/api/recommend")
+def recommend(request: Request, file: UploadFile | None = None, message: str | None = Form(None)):
+    
+    rag = request.app.state.rag
+    text = (message or "").strip()
+    
+    if file is not None:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temporary:
+            temporary.write(file.file.read())
+            upload_path = Path(temporary.name)
 
-    # 2. Return the recommendations as a JSON response
-    return {"recommendations": recommendations}
+        try:
+            outfits = rag.recommend(image_path=upload_path)
+        finally:
+            upload_path.unlink()
+    elif text:
+        outfits = rag.recommend(text=text)
+    else:
+        raise HTTPException(status_code=400, detail="Enviá una foto o un mensaje.")
+
+    for outfit in outfits:
+        for item in outfit["items"]:
+            del item["_image_abs_path"]
+
+    return {
+        "recommendations": outfits,
+        "explanation": "Outfits recuperados sin LLM (prueba de componentes).",
+    }

@@ -17,6 +17,7 @@ export default function App() {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
     if (!file) {
@@ -37,8 +38,9 @@ export default function App() {
 
   async function onSubmit(event) {
     event.preventDefault();
-    if (!file) {
-      setError("Elegí una foto de una prenda para empezar.");
+    const text = message.trim();
+    if (!file && !text) {
+      setError("Elegí una foto de una prenda o escribi un mensaje para empezar.");
       return;
     }
 
@@ -48,7 +50,8 @@ export default function App() {
 
     try {
       const body = new FormData();
-      body.append("file", file);
+      if (file) body.append("file", file);
+      if (text) body.append("message", text);
 
       const response = await fetch(`${API_BASE}/api/recommend`, {
         method: "POST",
@@ -101,9 +104,19 @@ export default function App() {
                 <span className="file-picker-icon">＋</span>
                 <span>{file ? file.name : "Seleccionar una foto"}</span>
               </label>
-              <button type="submit" className="submit-button" disabled={!file || loading}>
-                {loading ? <><span className="spinner" /> Buscando outfits…</> : "Encontrar outfits →"}
-              </button>
+              <textarea
+                className="message-input"
+                rows={3}
+                maxLength={300}
+                placeholder="Opcional: contanos qué estás buscando"
+                value={message}
+                onChange={(event) => setMessage(event.target.value)}
+              />
+              <button
+                type="submit"
+                className="submit-button"
+                disabled={(!file && !message.trim()) || loading}
+              >Enviar</button>
               <p className="file-hint">JPG, PNG o WEBP · Máximo 10 MB</p>
             </form>
             {error && <p className="error-message" role="alert">{error}</p>}
