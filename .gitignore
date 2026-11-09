@@ -19,5 +19,5 @@ Orag.log
 # Base vectorial y logs
 /chroma_db/
 /logs/
-
+/frontend/package-lock.json
 remember.txt
