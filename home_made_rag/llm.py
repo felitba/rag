@@ -12,6 +12,19 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableLambda
 from langchain_openai import ChatOpenAI
 
+from home_made_rag.llm_cost import LLMUsageLogger
+
+
+def image_data_url(path: Path, max_side: int = 768) -> str:
+    """Resize/encode a local image so it can be sent to the OpenAI API."""
+    buffer = io.BytesIO()
+    with Image.open(path) as opened:
+        image = ImageOps.exif_transpose(opened).convert("RGB")
+        image.thumbnail((max_side, max_side))
+        image.save(buffer, format="JPEG", quality=85, optimize=True)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
+
 
 class LLM:
     """Uses a vision-capable OpenAI model through LangChain to explain retrieved looks."""
@@ -21,21 +34,20 @@ class LLM:
         model_name: str,
         max_images_per_outfit: int = 2,
     ) -> None:
+        self.model_name = model_name
         self.max_images_per_outfit = max(0, max_images_per_outfit)
-        self.llm = ChatOpenAI(model=model_name, temperature=0)
+        self.llm = ChatOpenAI(
+            model=model_name,
+            temperature=0,
+            callbacks=[LLMUsageLogger(model_name, "explanation")],
+        )
         # LCEL pipeline: payload -> multimodal messages -> ChatOpenAI -> text.
         self.chain = RunnableLambda(self._build_messages) | self.llm | StrOutputParser()
 
     @staticmethod
     def _image_data_url(path: Path, max_side: int = 768) -> str:
-        """Resize/encode local image so it can be sent to the OpenAI API."""
-        buffer = io.BytesIO()
-        with Image.open(path) as opened:
-            image = ImageOps.exif_transpose(opened).convert("RGB")
-            image.thumbnail((max_side, max_side))
-            image.save(buffer, format="JPEG", quality=85, optimize=True)
-        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-        return f"data:image/jpeg;base64,{encoded}"
+        """Backwards-compatible wrapper around image_data_url()."""
+        return image_data_url(path, max_side=max_side)
 
     @staticmethod
     def _public_item_context(item: dict[str, Any]) -> dict[str, Any]:

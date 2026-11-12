@@ -146,6 +146,24 @@ export default function App() {
               </span>
             </div>
 
+            {results.suggested_complements?.length > 0 && (
+              <div className="stylist-suggestions">
+                <p className="eyebrow">PARA COMBINAR</p>
+                <ul>
+                  {results.suggested_complements.map((garment, index) => (
+                    <li key={`${garment.category}-${index}`}>
+                      <strong>{garment.category}</strong>
+                      <span>{garment.description_es || garment.description_en}</span>
+                      {garment.reason_es && <em>{garment.reason_es}</em>}
+                    </li>
+                  ))}
+                </ul>
+                <p className="suggestions-note">
+                  Sugerencias de estilo; no son productos garantizados en el catálogo.
+                </p>
+              </div>
+            )}
+
             {results.explanation && (
               <div className="explanation">
                 <span className="explanation-mark">✳</span>

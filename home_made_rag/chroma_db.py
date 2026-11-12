@@ -32,6 +32,24 @@ class ChromaDB:
             include=["metadatas", "documents", "distances"],
         )
     
+    def get_embeddings(self, ids, batch_size=500):
+        """Return a mapping item_id -> embedding for the requested IDs."""
+        unique_ids = [str(item_id) for item_id in dict.fromkeys(ids)]
+
+        if not unique_ids:
+            return {}
+
+        embeddings = {}
+
+        for start in range(0, len(unique_ids), batch_size):
+            batch = unique_ids[start:start + batch_size]
+            result = self.collection.get(ids=batch, include=["embeddings"])
+
+            for item_id, embedding in zip(result["ids"], result["embeddings"]):
+                embeddings[item_id] = embedding
+
+        return embeddings
+
     def count(self):
         return self.collection.count()
     

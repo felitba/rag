@@ -54,6 +54,13 @@ form { display: flex; flex-direction: column; align-items: flex-start; gap: 12px
 .section-heading { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 24px; }
 .section-heading h2 { margin-bottom: 0; }
 .result-count { font-size: 11px; color: var(--muted); padding-bottom: 5px; }
+.stylist-suggestions { border: 1px solid var(--line); background: var(--paper); padding: 18px 22px; margin-bottom: 18px; }
+.stylist-suggestions ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.stylist-suggestions li { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.stylist-suggestions strong { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+.stylist-suggestions span { color: #3a3733; line-height: 1.5; }
+.stylist-suggestions em { color: var(--muted); font-style: normal; font-size: 11px; line-height: 1.5; }
+.suggestions-note { margin: 14px 0 0; font-size: 10px; color: var(--muted); }
 .explanation { display: flex; gap: 14px; padding: 20px 22px; background: #eeeee5; margin-bottom: 28px; align-items: flex-start; }
 .explanation-mark { color: var(--accent); font-size: 20px; }
 .explanation p { font-size: 13px; line-height: 1.75; margin: 0; white-space: pre-wrap; }

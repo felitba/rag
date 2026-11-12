@@ -51,13 +51,22 @@ class ClipEmbedding:
         return features.cpu().float().tolist()
 
     def embed_text(self, text: str) -> list[float]:
-        tokens = clip.tokenize([text], truncate=True).to(self.device)
+        return self.embed_texts([text])[0]
+
+    def embed_texts(self, texts: Iterable[str]) -> list[list[float]]:
+        """Embed one batch of texts, preserving input order."""
+        batch = [text if text and text.strip() else " " for text in texts]
+
+        if not batch:
+            return []
+
+        tokens = clip.tokenize(batch, truncate=True).to(self.device)
 
         with torch.inference_mode():
             features = self.model.encode_text(tokens)
             features = features / features.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
-        return features.cpu().float().tolist()[0]
+        return features.cpu().float().tolist()
     
     @staticmethod
     def _pick_device(requested: str) -> str:

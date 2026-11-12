@@ -2,9 +2,15 @@
 import json
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 PACKAGE_DIR = Path(__file__).resolve().parent # .../rag/home_made_rag
 ROOT_DIR = PACKAGE_DIR.parent                 # .../rag
 CONFIG_PATH = PACKAGE_DIR / "config.json"
+
+# Load the repository .env before any component (LLM, embeddings, judge) reads
+# OPENAI_API_KEY or OPENAI_BASE_URL from the environment.
+load_dotenv(ROOT_DIR / ".env")
 
 with CONFIG_PATH.open("r", encoding="utf-8") as file:
     CONFIG = json.load(file)

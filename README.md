@@ -5,10 +5,12 @@ Proyecto de referencia para recibir una foto de una prenda, encontrar prendas vi
 ## Arquitectura
 
 1. **Indexación offline:** CLIP genera un embedding por imagen del catálogo. LangChain almacena los vectores en una colección persistente de ChromaDB junto con metadatos escalares. Los IDs de outfits se guardan como JSON dentro de los metadatos.
-2. **Consulta visual:** el usuario sube una imagen. El mismo modelo CLIP genera el vector de consulta y LangChain consulta ChromaDB.
-3. **Recuperación de outfits:** Python traduce las prendas similares a IDs de outfit y calcula un ranking inicial basado en la posición de recuperación. Los IDs de prendas de cada outfit vienen de `outfits.json`, que es la fuente canónica para la composición de los looks.
-4. **Explicación multimodal:** LangChain construye una cadena LCEL (`RunnableLambda | ChatOpenAI | StrOutputParser`) y envía la imagen del usuario, algunas imágenes del catálogo y los metadatos de los outfits seleccionados.
-5. **Frontend:** React muestra los outfits recuperados, las fotografías del catálogo y la explicación.
+2. **Expansión antes de recuperar (HyDE visual):** el usuario sube una imagen y/o escribe una descripción. Un modelo de visión económico (`gpt-4o-mini` por defecto) analiza la prenda y genera 2 o 3 descripciones de prendas complementarias. No se consulta la base todavía.
+3. **Embeddings hipotéticos:** las descripciones complementarias en inglés se pasan por `ClipEmbedding.embed_text()` para obtener los vectores objetivo.
+4. **Recuperación amplia:** con el embedding de la imagen original (o de la descripción ancla generada, en consultas solo texto) se piden `candidate_pool_k` prendas a ChromaDB y se traducen a outfits candidatos.
+5. **Rerank:** cada outfit candidato se puntúa con la similitud coseno exacta entre sus prendas y (a) la consulta original y (b) cada embedding hipotético. Los puntajes se normalizan y se combinan con pesos configurables.
+6. **Explicación condicionada:** el resumen generado por el modelo de visión se muestra solo si suficientes hipótesis fueron encontradas en los outfits seleccionados. Si no, se devuelve un mensaje genérico. No se envían imágenes del catálogo al LLM por defecto.
+7. **Frontend:** React muestra los outfits recuperados, las fotografías del catálogo y la explicación.
 
 > El LLM no decide qué productos existen ni puede agregar artículos a los resultados de la tienda. La selección de IDs y los datos comerciales quedan controlados por el backend.
 
@@ -151,11 +153,58 @@ VITE_API_BASE_URL=http://localhost:8000
 
 Si la API key falta o OpenAI falla, el backend todavía puede devolver outfits recuperados y una explicación de fallback. Para el flujo completo, configurá una clave válida y un modelo con soporte de imágenes.
 
+## Configuración de la expansión y el rerank
+
+Los parámetros principales viven en `home_made_rag/config.json`:
+
+| Clave | Para qué sirve | Valor inicial |
+|---|---|---|
+| `query_expansion.enabled` | Activa la expansión HyDE visual | `true` |
+| `query_expansion.model_name` | Modelo de visión económico | `gpt-4o-mini` |
+| `query_expansion.num_complements` | Prendas complementarias a generar | `3` |
+| `query_expansion.image_detail` | Nivel de detalle de la imagen enviada | `low` |
+| `query_expansion.max_output_tokens` | Límite de tokens de salida de la expansión | `800` |
+| `retrieval.candidate_pool_k` | Prendas recuperadas antes del rerank | `100` |
+| `retrieval.rerank_visual_weight` | Peso de la similitud visual | `0.35` |
+| `retrieval.rerank_hypothesis_weight` | Peso de la similitud con las hipótesis | `0.65` |
+| `explanation.min_hypothesis_similarity` | Umbral de cobertura por hipótesis | `0.24` |
+| `explanation.min_covered_hypotheses` | Hipótesis mínimas encontradas para mostrar el resumen | `2` |
+
+Si `query_expansion.enabled` es `false`, o si la llamada al modelo falla, se usa el flujo anterior de recuperación visual directa.
+
 ## Cómo se calcula el ranking
 
-Cada prenda recuperada en la posición `r` aporta `1 / (r + 1)` puntos a cada outfit al que pertenece. Después se suman esos puntos por outfit y se devuelven los de mayor puntuación. Es un baseline transparente para empezar; **el valor no es una probabilidad de compatibilidad**.
+Para cada outfit candidato `o`:
 
-Conviene evaluarlo con fotos de prueba etiquetadas y luego ajustar el ranking, por ejemplo agregando diversidad entre outfits, filtros por categoría, rangos de precio o disponibilidad. Actualmente solo se recomiendan outfits completos en los que todas las prendas estén disponibles.
+```text
+visual(o)      = max_i cos(query_embedding, item_embedding_i)
+hypothesis(o)  = mean_j max_i cos(hypothesis_embedding_j, item_embedding_i)
+```
+
+Ambos puntajes se normalizan con min-max sobre todos los outfits candidatos y se combinan:
+
+```text
+score(o) = rerank_visual_weight * norm(visual(o))
+         + rerank_hypothesis_weight * norm(hypothesis(o))
+```
+
+Los pesos por defecto son `0.35` y `0.65`. La similitud coseno de CLIP no está calibrada, por eso la normalización es necesaria. **El valor no es una probabilidad de compatibilidad.**
+
+### Explicación condicionada por cobertura
+
+Después del rerank, para cada hipótesis se calcula la mejor similitud contra las prendas de los outfits seleccionados. Si al menos `min_covered_hypotheses` superan `min_hypothesis_similarity`, se muestra el resumen generado por el modelo de visión. En caso contrario se devuelve `generic_message_es`. La cobertura usa prendas distintas para evitar que una sola prenda satisfaga varias hipótesis.
+
+El umbral `0.24` es solo un punto de partida. Conviene calibrarlo con consultas reales; si resulta inestable, se puede reemplazar por un z-score relativo a la distribución de similitudes de las prendas candidatas.
+
+### Logs de costo
+
+Cada llamada a OpenAI registra en consola y en `Orag.log` una línea con el nombre de la llamada, modelo, tokens de entrada/salida, tokens cacheados y costo estimado en USD:
+
+```text
+[LLM] call=query_expansion model=gpt-4o-mini input_tokens=512 cached_tokens=0 output_tokens=280 total_tokens=792 input_cost_usd=0.000077 output_cost_usd=0.000168 estimated_cost_usd=0.000245
+```
+
+Los precios se configuran en `llm_pricing_usd_per_million_tokens` dentro de `config.json`. Si un modelo no tiene precio configurado, el costo se informa como `0` y se emite una advertencia.
 
 ## Consideraciones antes de producción
 
