@@ -33,14 +33,50 @@
     "max_outfits": 5,
     "deduplicate_outfits": true,
     "exclude_query_item": true,
-    "minimum_similarity": null
+    "minimum_similarity": null,
+    "candidate_pool_k": 100,
+    "rerank_visual_weight": 0.35,
+    "rerank_hypothesis_weight": 0.65
+  },
+  "query_expansion": {
+    "enabled": true,
+    "model_name": "gpt-4o-mini",
+    "temperature": 0.2,
+    "num_complements": 3,
+    "image_detail": "low",
+    "image_max_side": 768,
+    "max_output_tokens": 800
+  },
+  "explanation": {
+    "min_hypothesis_similarity": 0.24,
+    "min_covered_hypotheses": 2,
+    "generic_message_es": "Estos son los looks del catálogo más cercanos a tu prenda. No pudimos confirmar que incluyan todos los complementos sugeridos, así que tomalos como punto de partida."
   },
   "llm": {
     "provider": "openai",
+    "enabled": true,
     "model_name": "gpt-4.1-mini",
     "temperature": 0.2,
-    "base_url": "http://localhost:11434",
+    "base_url": null,
+    "max_images_per_outfit": 2,
     "max_recommendations": 5
+  },
+  "llm_pricing_usd_per_million_tokens": {
+    "gpt-4o-mini": {
+      "input": 0.15,
+      "output": 0.60,
+      "cached_input": 0.075
+    },
+    "gpt-4.1-mini": {
+      "input": 0.40,
+      "output": 1.60,
+      "cached_input": 0.10
+    },
+    "gpt-4.1": {
+      "input": 2.00,
+      "output": 8.00,
+      "cached_input": 0.50
+    }
   },
   "api": {
     "host": "127.0.0.1",
