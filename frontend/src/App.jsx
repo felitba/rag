@@ -162,10 +162,12 @@ export default function App() {
                     <div className="outfit-card-heading">
                       <div>
                         <p className="eyebrow">LOOK {String(index + 1).padStart(2, "0")}</p>
-                        <h3>{outfit.outfit_id.replaceAll("_", " ")}</h3>
+                        <h3>{outfit.name || outfit.outfit_id.replaceAll("_", " ")}</h3>
                       </div>
-                      <span className="outfit-tag">Del catálogo</span>
+                      <span className="outfit-tag">{outfit.generated ? "Nueva combinación" : "Del catálogo"}</span>
                     </div>
+                    {outfit.description && <p className="outfit-description">{outfit.description}</p>}
+                    {outfit.explanation && <p className="outfit-explanation">{outfit.explanation}</p>}
                     <div className="garment-grid">
                       {outfit.items.map((item) => (
                         <div className="garment-card" key={item.garment_id}>

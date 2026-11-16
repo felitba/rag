@@ -7,10 +7,46 @@ Proyecto de referencia para recibir una foto de una prenda, encontrar prendas vi
 1. **Indexación offline:** CLIP genera un embedding por imagen del catálogo. LangChain almacena los vectores en una colección persistente de ChromaDB junto con metadatos escalares. Los IDs de outfits se guardan como JSON dentro de los metadatos.
 2. **Consulta visual:** el usuario sube una imagen. El mismo modelo CLIP genera el vector de consulta y LangChain consulta ChromaDB.
 3. **Recuperación de outfits:** Python traduce las prendas similares a IDs de outfit y calcula un ranking inicial basado en la posición de recuperación. Los IDs de prendas de cada outfit vienen de `outfits.json`, que es la fuente canónica para la composición de los looks.
-4. **Explicación multimodal:** LangChain construye una cadena LCEL (`RunnableLambda | ChatOpenAI | StrOutputParser`) y envía la imagen del usuario, algunas imágenes del catálogo y los metadatos de los outfits seleccionados.
-5. **Frontend:** React muestra los outfits recuperados, las fotografías del catálogo y la explicación.
+4. **Generación opcional:** `OutfitGenerator` recibe los outfits candidatos y metadatos permitidos del catálogo, y propone nuevas combinaciones con IDs estructurados.
+5. **Validación y frontend:** `RAG` valida los IDs y resuelve las prendas desde el catálogo original; React muestra las recomendaciones y explicaciones.
 
-> El LLM no decide qué productos existen ni puede agregar artículos a los resultados de la tienda. La selección de IDs y los datos comerciales quedan controlados por el backend.
+### Reranking con FashionCLIP
+
+La primera etapa recupera hasta `vector_store.top_k` prendas con el CLIP usado
+para indexar. Después, `FashionClipReranker` vuelve a codificar la consulta y
+esas imágenes con el checkpoint `patrickjohncyh/fashion-clip` mediante
+`transformers` y calcula su similitud coseno. Las prendas se
+ordenan por esa similitud y el score de la mejor prenda se usa para ordenar los
+outfits.
+
+FashionCLIP es un modelo CLIP ajustado con datos de moda: compara la imagen de
+la consulta con la apariencia visual de cada prenda (forma, color, estilo y
+categoría aprendidos), no con reglas explícitas de color o categoría. Para
+consultas de texto, compara el embedding del texto con los embeddings visuales
+de las prendas.
+
+El modelo se carga de forma diferida en la primera recomendación. Se puede
+desactivar temporalmente con `reranker.enabled` en `home_made_rag/config.json`.
+
+> El LLM propone combinaciones de IDs, pero no decide qué productos existen ni puede agregar artículos a los resultados de la tienda. El backend solo devuelve IDs pertenecientes a los outfits recuperados y conserva sus datos originales.
+
+### Generador de outfits
+
+Después del retrieval y del reranking, `OutfitGenerator` recibe los outfits
+candidatos y metadatos permitidos del catálogo. Devuelve IDs estructurados;
+`RAG` valida cada ID y resuelve las prendas desde los objetos originales del
+catálogo. La configuración `generator` de `home_made_rag/config.json` controla
+el modelo, la cantidad de outfits de contexto y el máximo de sugerencias.
+
+La API key se lee desde `OPENAI_API_KEY`; `OPENAI_MODEL` y `OPENAI_BASE_URL`
+pueden sobrescribir el modelo y el proxy. Por defecto, el cliente usa
+`https://sa-llmproxy.it.itba.edu.ar/`. El catálogo actual no contiene campos `color` ni `style`, así que
+esos atributos se omiten y no se inventan. Si falta la key, falla OpenAI o la
+salida no pasa validación, la API devuelve los outfits recuperados.
+
+El log registra tokens de entrada/salida y el costo calculado según las tarifas
+por millón de tokens configuradas en `generator`. Actualizá esas tarifas cuando
+cambies de modelo o modalidad de facturación.
 
 ## Estructura
 
@@ -139,8 +175,9 @@ VITE_API_BASE_URL=http://localhost:8000
 
 | Variable | Para qué sirve | Valor inicial |
 |---|---|---|
-| `OPENAI_API_KEY` | Autenticación para el LLM | Obligatoria para explicaciones |
-| `OPENAI_MODEL` | Modelo multimodal disponible en tu cuenta | `gpt-4.1-mini` |
+| `OPENAI_API_KEY` | Autenticación para generación | Necesaria si `generator.enabled` está activo |
+| `OPENAI_MODEL` | Sobrescribe el modelo del generador | `gpt-4.1-mini` |
+| `OPENAI_BASE_URL` | Sobrescribe la URL base del proxy | `https://sa-llmproxy.it.itba.edu.ar/` |
 | `CLIP_MODEL` | Modelo de CLIP local | `ViT-B/32` |
 | `CHROMA_PATH` | Directorio persistente | `storage/chroma` |
 | `COLLECTION_NAME` | Colección vectorial | `fashion_garments` |
@@ -149,7 +186,34 @@ VITE_API_BASE_URL=http://localhost:8000
 | `MAX_IMAGES_PER_OUTFIT_FOR_LLM` | Imágenes del catálogo enviadas al LLM por outfit | `2` |
 | `MAX_UPLOAD_MB` | Tamaño máximo de foto subida | `10` |
 
-Si la API key falta o OpenAI falla, el backend todavía puede devolver outfits recuperados y una explicación de fallback. Para el flujo completo, configurá una clave válida y un modelo con soporte de imágenes.
+Si la API key falta o OpenAI falla, el backend todavía puede devolver outfits recuperados y una explicación de fallback. Instalá las dependencias con `pip install -r requirements.txt`.
+
+Ejecutá las pruebas de validación de IDs con:
+
+```bash
+python -m unittest discover -s tests
+```
+
+Ejemplo de respuesta con generación exitosa (los datos de las prendas se
+resuelven siempre desde el catálogo):
+
+```json
+{
+  "recommendations": [{
+    "outfit_id": "generated_01",
+    "name": "Capas urbanas neutras",
+    "description": "Una combinación relajada para todos los días.",
+    "explanation": "Las prendas crean un conjunto equilibrado.",
+    "style_tags": ["urbano", "casual"],
+    "source_outfits": ["210750761"],
+    "generated": true,
+    "items": [{"garment_id": "154249722", "category": "shoes", "title": "...", "color": null, "style": null, "price": null, "image_url": "/images/..."}]
+  }],
+  "explanation": "Sugerencias nuevas basadas en prendas recuperadas.",
+  "generation_enabled": true,
+  "generation_status": "generated"
+}
+```
 
 ## Cómo se calcula el ranking
 

@@ -29,6 +29,11 @@
     "distance_metric": "cosine",
     "top_k": 30
   },
+  "reranker": {
+    "enabled": false,
+    "model_name": "patrickjohncyh/fashion-clip",
+    "batch_size": 32
+  },
   "retrieval": {
     "max_outfits": 5,
     "deduplicate_outfits": true,
@@ -41,6 +46,17 @@
     "temperature": 0.2,
     "base_url": "http://localhost:11434",
     "max_recommendations": 5
+  },
+  "generator": {
+    "enabled": true,
+    "model": "gpt-4.1-mini",
+    "base_url": "https://sa-llmproxy.it.itba.edu.ar/",
+    "top_n_outfits": 10,
+    "max_generated_outfits": 3,
+    "timeout_seconds": 25,
+    "input_usd_per_million_tokens": 0.4,
+    "cached_input_usd_per_million_tokens": 0.1,
+    "output_usd_per_million_tokens": 1.6
   },
   "api": {
     "host": "127.0.0.1",
