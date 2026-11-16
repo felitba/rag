@@ -10,8 +10,7 @@ storage/uploads/*
 .DS_Store
 node_modules/
 frontend/dist/
-docs/implementation_guide.md
-docs/polyvore_dataset_and_preparation.md
+docs/extra/
 Orag.log
 
 # Polyvore: imágenes y catálogo regenerables
@@ -22,3 +21,4 @@ Orag.log
 /logs/
 /frontend/package-lock.json
 remember.txt
+
