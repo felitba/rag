@@ -11,6 +11,15 @@ function money(value) {
   }).format(value);
 }
 
+function alignmentLabel(alignment) {
+  return {
+    match: "Coincide en categoría y color",
+    category_only: "Coincide en categoría; falta dato de color",
+    mismatch: "No coincide con los atributos detectados",
+    unknown: "Sin datos suficientes para comparar",
+  }[alignment] || "Sin datos suficientes para comparar";
+}
+
 export default function App() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -150,6 +159,28 @@ export default function App() {
               <div className="explanation">
                 <span className="explanation-mark">✳</span>
                 <p>{results.explanation}</p>
+              </div>
+            )}
+
+            {results.query_attributes && (
+              <div className="attribute-analysis">
+                <p className="eyebrow">LECTURA VISUAL DE LA FOTO</p>
+                <div className="attribute-values">
+                  <span>Prenda: <strong>{results.query_attributes.category?.label || "No clasificada"}</strong></span>
+                  <span>Color: <strong>{results.query_attributes.color?.color || "Sin estimación"}</strong></span>
+                </div>
+                <p className="attribute-note">Estimación zero-shot de FashionCLIP; los scores son similitudes relativas, no probabilidades.</p>
+                {results.retrieved_metadata_matches?.length > 0 && (
+                  <div className="metadata-check">
+                    <strong>Chequeo orientativo contra metadatos recuperados</strong>
+                    {results.retrieved_metadata_matches.map((match) => (
+                      <div className="metadata-match-row" key={match.garment_id}>
+                        <span>{match.title || match.garment_id}</span>
+                        <span>{alignmentLabel(match.alignment)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

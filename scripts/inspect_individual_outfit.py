@@ -24,7 +24,7 @@ metadata_path = hf_hub_download(
 with open(metadata_path, encoding="utf-8") as file:
     metadata = json.load(file)
 
-first_item_id = str(outfits[0]["items"][0]["item_id"])
-
-print("\nMetadata de la primera prenda:")
-pprint(metadata[first_item_id])
+print("\nMetadata de las primeras 5 prendas:")
+for item in outfits[0]["items"][:5]:
+    item_id = str(item["item_id"])
+    pprint(metadata[item_id])

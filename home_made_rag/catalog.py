@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from urllib.parse import quote
 
+from home_made_rag.color_metadata import estimate_garment_color
 
 from home_made_rag.config import (
     ITEMS_FILE,
@@ -86,25 +87,44 @@ class Catalog:
             path = self.image_path(item_id)
             if not path.is_file():
                 raise FileNotFoundError(f"No existe la imagen de la prenda {item_id}: {path}")
+
+    def enrich_missing_colors(self, persist: bool = True) -> int:
+        """Estimate and persist a dominant color for catalog rows without one."""
+        enriched = 0
+        for item_id, item in self.items.items():
+            if isinstance(item.get("color"), str) and item["color"].strip():
+                continue
+            item.update(estimate_garment_color(self.image_path(item_id)))
+            enriched += 1
+
+        if enriched and persist:
+            with ITEMS_FILE.open("w", encoding="utf-8") as file:
+                for item in self.items.values():
+                    file.write(json.dumps(item, ensure_ascii=False) + "\n")
+        return enriched
             
-    def outfit_items(self, outfit_id:str) -> list[dict]:
-        item_ids = self.outfits[outfit_id]
-        return [self.items[item_id] for item_id in item_ids]
-    
     def document(self, item_id: str) -> str:
         item = self.items[item_id]
-        parts = [
-            (item.get("title") or "").strip(),
-            (item.get("description") or "").strip(),
-        ]
+        parts = [(item.get(key) or "").strip() for key in ("title", "description", "url_name")]
+        for key in ("categories", "catgeories", "related"):
+            values = item.get(key) or []
+            if isinstance(values, str):
+                values = [values]
+            if isinstance(values, list):
+                parts.extend(str(value).strip() for value in values if str(value).strip())
         text = ". ".join(part for part in parts if part)
         return text or item["category"]
     
     def metadata(self, item_id:str) -> dict:
         item = self.items[item_id]
-        return {
+        metadata = {
             "category": item["category"],
             "image_path": item["image_path"],
             "outfit_ids_json": json.dumps(self.outfits_by_item[item_id])
         }
+        for key in ("color", "color_source", "color_confidence"):
+            value = item.get(key)
+            if value not in (None, ""):
+                metadata[key] = value
+        return metadata
     

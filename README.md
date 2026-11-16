@@ -1,32 +1,51 @@
-# Fashion RAG — CLIP + ChromaDB + LangChain + OpenAI
+# Fashion RAG — CLIP + ChromaDB + OpenAI
 
 Proyecto de referencia para recibir una foto de una prenda, encontrar prendas visualmente similares con CLIP, recuperar los outfits prearmados relacionados y generar una explicación en español con un modelo multimodal de OpenAI.
 
 ## Arquitectura
 
-1. **Indexación offline:** CLIP genera un embedding por imagen del catálogo. LangChain almacena los vectores en una colección persistente de ChromaDB junto con metadatos escalares. Los IDs de outfits se guardan como JSON dentro de los metadatos.
-2. **Consulta visual:** el usuario sube una imagen. El mismo modelo CLIP genera el vector de consulta y LangChain consulta ChromaDB.
-3. **Recuperación de outfits:** Python traduce las prendas similares a IDs de outfit y calcula un ranking inicial basado en la posición de recuperación. Los IDs de prendas de cada outfit vienen de `outfits.json`, que es la fuente canónica para la composición de los looks.
+1. **Indexación offline:** CLIP genera un embedding por imagen del catálogo y una rutina visual estima su color dominante. La categoría existente del dataset se conserva. ChromaDB guarda embeddings y los metadatos `category` y `color`.
+2. **Consulta visual:** el usuario sube una imagen. CLIP recupera candidatos por embedding; el sistema estima el color de la consulta y clasifica su categoría dentro de las categorías presentes en el catálogo.
+3. **Recuperación de outfits:** Python aplica el re-ranking híbrido a las prendas similares y las traduce a IDs de outfit. `outfits.json` es la fuente canónica para la composición de los looks.
 4. **Generación opcional:** `OutfitGenerator` recibe los outfits candidatos y metadatos permitidos del catálogo, y propone nuevas combinaciones con IDs estructurados.
 5. **Validación y frontend:** `RAG` valida los IDs y resuelve las prendas desde el catálogo original; React muestra las recomendaciones y explicaciones.
 
-### Reranking con FashionCLIP
+### Re-ranking híbrido
 
-La primera etapa recupera hasta `vector_store.top_k` prendas con el CLIP usado
-para indexar. Después, `FashionClipReranker` vuelve a codificar la consulta y
-esas imágenes con el checkpoint `patrickjohncyh/fashion-clip` mediante
-`transformers` y calcula su similitud coseno. Las prendas se
-ordenan por esa similitud y el score de la mejor prenda se usa para ordenar los
-outfits.
+La primera etapa recupera hasta `vector_store.top_k` candidatos por similitud
+coseno del embedding CLIP. Después se ordenan con una suma ponderada de
+similitud coseno, coincidencia de color y coincidencia de categoría. Los pesos
+iniciales están en `hybrid_reranker.weights` en `home_made_rag/config.json` y
+son configurables. Si un atributo no está disponible, se omite y se
+renormalizan los pesos restantes.
 
-FashionCLIP es un modelo CLIP ajustado con datos de moda: compara la imagen de
-la consulta con la apariencia visual de cada prenda (forma, color, estilo y
-categoría aprendidos), no con reglas explícitas de color o categoría. Para
-consultas de texto, compara el embedding del texto con los embeddings visuales
-de las prendas.
+La categoría de cada producto viene del dataset y se conserva sin inferirla al
+indexar. Para una foto de consulta, FashionCLIP elige la categoría más cercana
+entre las categorías del catálogo. El color del catálogo y de la consulta se
+estima con el mismo proceso: se reduce la imagen, se intenta excluir el fondo
+uniforme conectado a los bordes, se asigna cada píxel restante a una paleta
+HSV y se selecciona el color más frecuente. `color_confidence` es la fracción
+de píxeles retenidos que cae en esa clase; no es una probabilidad calibrada.
 
-El modelo se carga de forma diferida en la primera recomendación. Se puede
-desactivar temporalmente con `reranker.enabled` en `home_made_rag/config.json`.
+FashionCLIP se carga de forma diferida cuando llega la primera consulta visual.
+La respuesta incluye las estimaciones de categoría/color, las componentes del
+ranking y una comparación orientativa con los metadatos de los garments
+recuperados. Las similitudes del clasificador son relativas a las categorías
+del catálogo.
+
+### Clasificación visual de la consulta
+
+Con `category_classifier.enabled`, FashionCLIP clasifica la foto de entrada
+entre las categorías existentes en el catálogo. El color de la consulta se
+calcula con el estimador de píxeles descrito arriba. La respuesta de
+`/api/recommend` incluye `query_attributes`; las similitudes del clasificador
+son relativas a las etiquetas del catálogo, no probabilidades calibradas.
+
+El backend también devuelve `retrieved_metadata_matches`: compara la categoría
+del dataset y el color guardado como metadata de cada garment recuperado.
+Si falta alguno de esos campos, su componente no participa del score.
+Al regenerar el catálogo con `prepare_polyvore.py`, se conservan categorías
+taxonómicas, términos relacionados y `url_name` para facilitar esa comparación.
 
 > El LLM propone combinaciones de IDs, pero no decide qué productos existen ni puede agregar artículos a los resultados de la tienda. El backend solo devuelve IDs pertenecientes a los outfits recuperados y conserva sus datos originales.
 
@@ -38,10 +57,12 @@ candidatos y metadatos permitidos del catálogo. Devuelve IDs estructurados;
 catálogo. La configuración `generator` de `home_made_rag/config.json` controla
 el modelo, la cantidad de outfits de contexto y el máximo de sugerencias.
 
-La API key se lee desde `OPENAI_API_KEY`; `OPENAI_MODEL` y `OPENAI_BASE_URL`
+La credencial del proxy se lee primero desde `LLM_API_KEY` (`OPENAI_API_KEY`
+queda como fallback para uso directo). `OPENAI_MODEL` y `OPENAI_BASE_URL`
 pueden sobrescribir el modelo y el proxy. Por defecto, el cliente usa
-`https://sa-llmproxy.it.itba.edu.ar/`. El catálogo actual no contiene campos `color` ni `style`, así que
-esos atributos se omiten y no se inventan. Si falta la key, falla OpenAI o la
+`https://sa-llmproxy.it.itba.edu.ar/`. El color se estima al indexar si falta
+en el catálogo; `style` se omite cuando no está disponible. Si falta la key,
+falla OpenAI o la
 salida no pasa validación, la API devuelve los outfits recuperados.
 
 El log registra tokens de entrada/salida y el costo calculado según las tarifas
@@ -138,7 +159,7 @@ El JSON incluido trae datos ilustrativos y rutas de imágenes de ejemplo. Antes 
 python scripts/index_catalog.py
 ```
 
-El script valida las referencias y la existencia de todas las imágenes antes de modificar el índice. Después **reconstruye la colección completa** y calcula los embeddings con CLIP. Si agregás, quitás o modificás fotos, volvé a ejecutarlo.
+El script valida las referencias y la existencia de todas las imágenes, estima y guarda el color faltante de cada garment, y después **reconstruye la colección completa** con embeddings CLIP y metadata de categoría/color. Si agregás, quitás o modificás fotos, volvé a ejecutarlo.
 
 ChromaDB persiste los vectores en `storage/chroma/`. No subas esa carpeta a Git; podés reconstruirla usando el catálogo.
 
@@ -175,7 +196,8 @@ VITE_API_BASE_URL=http://localhost:8000
 
 | Variable | Para qué sirve | Valor inicial |
 |---|---|---|
-| `OPENAI_API_KEY` | Autenticación para generación | Necesaria si `generator.enabled` está activo |
+| `LLM_API_KEY` | Credencial del proxy LiteLLM de ITBA | Necesaria para el proxy |
+| `OPENAI_API_KEY` | Credencial fallback para uso directo de OpenAI | Opcional; no reemplaza la clave del proxy |
 | `OPENAI_MODEL` | Sobrescribe el modelo del generador | `gpt-4.1-mini` |
 | `OPENAI_BASE_URL` | Sobrescribe la URL base del proxy | `https://sa-llmproxy.it.itba.edu.ar/` |
 | `CLIP_MODEL` | Modelo de CLIP local | `ViT-B/32` |

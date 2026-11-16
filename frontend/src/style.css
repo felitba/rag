@@ -57,6 +57,15 @@ form { display: flex; flex-direction: column; align-items: flex-start; gap: 12px
 .explanation { display: flex; gap: 14px; padding: 20px 22px; background: #eeeee5; margin-bottom: 28px; align-items: flex-start; }
 .explanation-mark { color: var(--accent); font-size: 20px; }
 .explanation p { font-size: 13px; line-height: 1.75; margin: 0; white-space: pre-wrap; }
+.attribute-analysis { background: var(--paper); border: 1px solid var(--line); padding: 18px 22px; margin: 0 0 28px; }
+.attribute-analysis .eyebrow { margin-bottom: 10px; }
+.attribute-values { display: flex; flex-wrap: wrap; gap: 10px 24px; font-size: 13px; }
+.attribute-values strong { text-transform: capitalize; }
+.attribute-note { color: var(--muted); font-size: 11px; margin: 9px 0 0; }
+.metadata-check { margin-top: 16px; font-size: 12px; }
+.metadata-check > strong { display: block; margin-bottom: 8px; }
+.metadata-match-row { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-top: 1px solid var(--line); color: var(--muted); }
+.metadata-match-row span:last-child { text-align: right; }
 .outfit-list { display: grid; grid-template-columns: 1fr; gap: 22px; }
 .outfit-card { background: var(--paper); border: 1px solid var(--line); padding: 22px; }
 .outfit-card-heading { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 18px; }
@@ -89,4 +98,7 @@ footer span:first-child { letter-spacing: .14em; color: #343a31; font-weight: 70
   .outfit-card { padding: 16px; }
   .results-section { padding-top: 55px; }
   footer { flex-direction: column; }
+  .attribute-analysis { padding: 16px; }
+  .metadata-match-row { flex-direction: column; gap: 3px; }
+  .metadata-match-row span:last-child { text-align: left; }
 }

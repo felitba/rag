@@ -2,19 +2,112 @@ import json
 import logging
 
 from home_made_rag.config import CONFIG
+from home_made_rag.color_metadata import estimate_garment_color
+from home_made_rag.hybrid_reranker import HybridGarmentReranker
 
 logger = logging.getLogger(__name__)
 
 class RAG:
-    def __init__(self, embedding, llm, chroma, catalog, reranker=None, generator=None):
+    def __init__(
+        self,
+        embedding,
+        chroma,
+        catalog,
+        generator=None,
+        attribute_classifier=None,
+        hybrid_reranker=None,
+    ):
         self.embedding = embedding
-        self.llm = llm
         self.chroma = chroma
         self.catalog = catalog
-        self.reranker = reranker
         self.generator = generator
+        self.attribute_classifier = attribute_classifier
+        self.hybrid_reranker = hybrid_reranker or HybridGarmentReranker()
 
-    def recommend(self, image_path=None, text=None, max_outfits=None):
+    def classify_query_image(self, image_path):
+        category = None
+        if self.attribute_classifier:
+            try:
+                category = self.attribute_classifier.classify(image_path)
+            except Exception:
+                logger.exception("Input garment category classification failed")
+        return {
+            "category": category,
+            "color": estimate_garment_color(image_path),
+        }
+
+    def compare_retrieved_metadata(self, outfits, query_attributes):
+        """Compare detected query attributes with metadata for retrieved garments."""
+        if not query_attributes:
+            return []
+
+        category = (query_attributes.get("category") or {}).get("label")
+        color = (query_attributes.get("color") or {}).get("color")
+        garment_ids = list(dict.fromkeys(
+            garment_id
+            for outfit in outfits
+            for garment_id in outfit.get("matched_garment_ids", [])
+        ))
+        comparisons = []
+        for garment_id in garment_ids:
+            item = self.catalog.items.get(garment_id, {})
+            item_category = item.get("category")
+            item_color = item.get("color")
+            category_match = (
+                self._normalize_category(item_category) == self._normalize_category(category)
+                if item_category and category else None
+            )
+            color_match = (
+                str(item_color).strip().lower() == str(color).strip().lower()
+                if item_color and color else None
+            )
+            if category_match is False or color_match is False:
+                alignment = "mismatch"
+            elif category_match is True and color_match is True:
+                alignment = "match"
+            elif category_match is True:
+                alignment = "category_only"
+            else:
+                alignment = "unknown"
+            comparisons.append({
+                "garment_id": garment_id,
+                "title": item.get("title") or None,
+                "category": item_category,
+                "category_match": category_match,
+                "query_color": color,
+                "metadata_color": item_color,
+                "color_match": color_match,
+                "alignment": alignment,
+            })
+        return comparisons
+
+    @staticmethod
+    def _normalize_category(value):
+        if not value:
+            return None
+        normalized = str(value).strip().lower()
+        aliases = {
+            "jewelry": "jewellery",
+            "clothes": "clothing",
+            "shirt": "tops",
+            "blouse": "tops",
+            "pants": "bottoms",
+            "trousers": "bottoms",
+            "coat": "outerwear",
+            "jacket": "outerwear",
+            "handbag": "bags",
+            "sandal": "shoes",
+        }
+        return aliases.get(normalized, normalized)
+
+    def recommend(
+        self,
+        image_path=None,
+        text=None,
+        max_outfits=None,
+        query_attributes=None,
+        return_query_attributes=False,
+    ):
         if image_path is not None:
             query_embedding = self.embedding.embed_image(image_path)
         elif text:
@@ -23,19 +116,18 @@ class RAG:
             raise ValueError("Se necesita una imagen o un texto para recomendar")
 
         matches = self._search(query_embedding, CONFIG["vector_store"]["top_k"])
-        if self.reranker is not None:
-            matches = self.reranker.rerank(
-                matches,
-                self.catalog,
-                image_path=image_path,
-                text=text,
-            )
-        return self._collect_outfits(
+        if image_path is not None and query_attributes is None:
+            query_attributes = self.classify_query_image(image_path)
+        matches = self.hybrid_reranker.rerank(matches, query_attributes)
+        outfits = self._collect_outfits(
             matches,
             max_outfits if max_outfits is not None else CONFIG["retrieval"]["max_outfits"],
         )
+        if return_query_attributes:
+            return outfits, query_attributes
+        return outfits
 
-    def recommend_with_generation(self, image_path=None, text=None):
+    def recommend_with_generation(self, image_path=None, text=None, query_attributes=None):
         """Run retrieval once, then generate catalog-grounded suggestions when available."""
         settings = CONFIG.get("generator", {})
         enabled = bool(settings.get("enabled", False))
@@ -44,28 +136,34 @@ class RAG:
             settings.get("top_n_outfits", CONFIG["retrieval"]["max_outfits"])
             if enabled and has_generator else None
         )
-        retrieved = self.recommend(image_path=image_path, text=text, max_outfits=candidate_limit)
+        retrieved, query_attributes = self.recommend(
+            image_path=image_path,
+            text=text,
+            max_outfits=candidate_limit,
+            query_attributes=query_attributes,
+            return_query_attributes=True,
+        )
 
         if not enabled:
-            return retrieved, "Outfits recuperados del catálogo.", "disabled"
+            return retrieved, "Outfits recuperados del catálogo.", "disabled", retrieved, query_attributes
         if not has_generator:
-            return retrieved, "Outfits recuperados del catálogo; generación no disponible.", "unavailable"
+            return retrieved, "Outfits recuperados del catálogo; generación no disponible.", "unavailable", retrieved, query_attributes
         if not retrieved:
-            return retrieved, "No encontramos suficientes outfits del catálogo para generar sugerencias.", "insufficient_candidates"
+            return retrieved, "No encontramos suficientes outfits del catálogo para generar sugerencias.", "insufficient_candidates", retrieved, query_attributes
 
         try:
             generated = self.generator.generate(retrieved, prompt=text)
             if not generated.get("outfits"):
                 explanation = generated.get("explanation") or "El catálogo recuperado no ofrece suficientes prendas para crear un conjunto nuevo."
-                return [], explanation, "insufficient_candidates"
+                return [], explanation, "insufficient_candidates", retrieved, query_attributes
             recommendations = self._resolve_generated(generated, retrieved)
             if not recommendations:
                 raise ValueError("El generador no devolvió combinaciones válidas")
             explanation = generated.get("explanation") or "Sugerencias nuevas basadas en prendas de los outfits recuperados."
-            return recommendations, explanation, "generated"
+            return recommendations, explanation, "generated", retrieved, query_attributes
         except Exception:
             logger.exception("Outfit generation failed; returning retrieved recommendations")
-            return retrieved, "La generación no estuvo disponible; mostramos los outfits recuperados del catálogo.", "fallback"
+            return retrieved, "La generación no estuvo disponible; mostramos los outfits recuperados del catálogo.", "fallback", retrieved, query_attributes
 
     def _resolve_generated(self, generated, candidates):
         candidate_outfits = {outfit["outfit_id"]: outfit for outfit in candidates}
@@ -117,15 +215,15 @@ class RAG:
             })
         return resolved
 
-    def explain(self, image_path, outfits):
-        return self.llm.explain(image_path, outfits)
-    
     def _search(self, query_embedding, top_k):
         result = self.chroma.retrieve(query_embedding, top_k=top_k)
         return [
             {
                 "item_id": item_id,
                 "distance": distance,
+                "category": metadata.get("category"),
+                "color": metadata.get("color"),
+                "color_confidence": metadata.get("color_confidence"),
                 "outfit_ids": json.loads(metadata["outfit_ids_json"]),
             }
             for item_id, distance, metadata in zip(
@@ -175,7 +273,10 @@ class RAG:
             "_image_abs_path": str(self.catalog.image_path(item_id)),
             "_catalog_metadata": {
                 key: item.get(key)
-                for key in ("category", "title", "description", "color", "style")
+                for key in (
+                    "category", "categories", "catgeories",
+                    "title", "description", "related", "url_name", "color", "style",
+                )
                 if item.get(key) not in (None, "")
             },
         }

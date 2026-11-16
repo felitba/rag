@@ -17,6 +17,7 @@ from home_made_rag.config import (
     ITEMS_FILE,
     OUTFITS_FILE,
 )
+from home_made_rag.color_metadata import estimate_garment_color
 
 def download_json(filename):
     path = hf_hub_download(
@@ -27,6 +28,14 @@ def download_json(filename):
     
     with open(path, encoding="utf-8") as file:
         return json.load(file)
+
+
+def normalize_text_list(value):
+    if isinstance(value, list):
+        return [str(part).strip() for part in value if str(part).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
     
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -107,13 +116,18 @@ def main():
                 
             with Image.open(image_source) as image:
                 image.convert("RGB").save(image_path, format="JPEG")
+            estimated_color = estimate_garment_color(image_path)
             
             items[item_id] = {
                 "item_id": item_id,
                 "image_path": image_path.relative_to(ROOT_DIR).as_posix(),
                 "category": item_metadata["semantic_category"],
+                "categories": normalize_text_list(item_metadata.get("catgeories")),
                 "title": item_metadata["title"],
                 "description": item_metadata["description"],
+                "related": normalize_text_list(item_metadata.get("related")),
+                "url_name": item_metadata.get("url_name") or "",
+                **estimated_color,
                 "available": True,
                 "price": None,
                 

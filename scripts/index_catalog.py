@@ -13,8 +13,10 @@ def main():
     # load and validate catalog
     catalog = Catalog()
     catalog.validate_images()
+    enriched_colors = catalog.enrich_missing_colors()
     item_ids = list(catalog.items)
     print(f"Catalog OK: {len(item_ids)} items, {len(catalog.outfits)} outfits")
+    print(f"Estimated colors for {enriched_colors} garments")
     
     # load CLIP
     clip_model = ClipEmbedding()

@@ -14,7 +14,7 @@ from home_made_rag.catalog import Catalog
 from home_made_rag.chroma_db import ChromaDB
 from home_made_rag.config import CONFIG, IMAGES_DIR
 from home_made_rag.embedding import ClipEmbedding
-from home_made_rag.fashion_clip_reranker import FashionClipReranker
+from home_made_rag.fashion_clip_classifier import FashionClipCategoryClassifier
 from home_made_rag.generator import OutfitGenerator
 from home_made_rag.rag import RAG
 
@@ -37,11 +37,20 @@ async def lifespan(app: FastAPI):
     catalog = Catalog()
     embedding = ClipEmbedding()
     chroma = ChromaDB()
-    reranker = FashionClipReranker() if CONFIG["reranker"]["enabled"] else None
+    attribute_classifier = (
+        FashionClipCategoryClassifier(
+            labels=[item.get("category") for item in catalog.items.values() if item.get("category")]
+        )
+        if CONFIG.get("category_classifier", {}).get("enabled", False)
+        else None
+    )
     generator = None
     generator_settings = CONFIG.get("generator", {})
     if generator_settings.get("enabled", False):
-        api_key = os.getenv("OPENAI_API_KEY")
+        # ITBA's LiteLLM proxy expects its own credential (LLM_API_KEY).
+        # Keep OPENAI_API_KEY as a backwards-compatible fallback.
+        credential_name = "LLM_API_KEY" if os.getenv("LLM_API_KEY") else "OPENAI_API_KEY"
+        api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         if api_key:
             generator = OutfitGenerator(
                 api_key=api_key,
@@ -54,10 +63,17 @@ async def lifespan(app: FastAPI):
                 output_usd_per_million_tokens=generator_settings.get("output_usd_per_million_tokens", 1.6),
             )
             logger.info("Outfit generator enabled (model=%s)", generator.model)
+            logger.info("Outfit generator credential loaded from %s", credential_name)
         else:
-            logger.warning("Generator is enabled but OPENAI_API_KEY is missing; using retrieval fallback")
+            logger.warning("Generator is enabled but LLM_API_KEY/OPENAI_API_KEY is missing; using retrieval fallback")
 
-    app.state.rag = RAG(embedding, None, chroma, catalog, reranker, generator)
+    app.state.rag = RAG(
+        embedding,
+        chroma,
+        catalog,
+        generator=generator,
+        attribute_classifier=attribute_classifier,
+    )
     logger.info("Ready. Indexed garments: %d", chroma.count())
     
     yield
@@ -90,14 +106,16 @@ def recommend(request: Request, file: UploadFile | None = None, message: str | N
             upload_path = Path(temporary.name)
 
         try:
-            outfits, explanation, generation_status = rag.recommend_with_generation(
+            outfits, explanation, generation_status, retrieved_context, query_attributes = rag.recommend_with_generation(
                 image_path=upload_path,
                 text=text or None,
             )
+            metadata_matches = rag.compare_retrieved_metadata(retrieved_context, query_attributes)
         finally:
             upload_path.unlink()
     elif text:
-        outfits, explanation, generation_status = rag.recommend_with_generation(text=text)
+        outfits, explanation, generation_status, _, query_attributes = rag.recommend_with_generation(text=text)
+        metadata_matches = []
     else:
         raise HTTPException(status_code=400, detail="Enviá una foto o un mensaje.")
 
@@ -110,6 +128,8 @@ def recommend(request: Request, file: UploadFile | None = None, message: str | N
     return {
         "recommendations": outfits,
         "explanation": explanation,
+        "query_attributes": query_attributes,
+        "retrieved_metadata_matches": metadata_matches,
         "generation_enabled": bool(CONFIG.get("generator", {}).get("enabled", False)),
         "generation_status": generation_status,
     }

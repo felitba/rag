@@ -29,23 +29,22 @@
     "distance_metric": "cosine",
     "top_k": 30
   },
-  "reranker": {
-    "enabled": false,
-    "model_name": "patrickjohncyh/fashion-clip",
-    "batch_size": 32
+  "category_classifier": {
+    "enabled": true,
+    "model_name": "patrickjohncyh/fashion-clip"
+  },
+  "hybrid_reranker": {
+    "weights": {
+      "cosine_similarity": 0.5,
+      "color": 0.25,
+      "category": 0.25
+    }
   },
   "retrieval": {
     "max_outfits": 5,
     "deduplicate_outfits": true,
     "exclude_query_item": true,
     "minimum_similarity": null
-  },
-  "llm": {
-    "provider": "openai",
-    "model_name": "gpt-4.1-mini",
-    "temperature": 0.2,
-    "base_url": "http://localhost:11434",
-    "max_recommendations": 5
   },
   "generator": {
     "enabled": true,
