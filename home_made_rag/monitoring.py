@@ -80,6 +80,14 @@ class MonitoringService:
                     payload_json TEXT NOT NULL,
                     PRIMARY KEY (request_id, stage, rank)
                 );
+                CREATE TABLE IF NOT EXISTS generator_outfits (
+                    request_id TEXT NOT NULL REFERENCES requests(request_id) ON DELETE CASCADE,
+                    stage TEXT NOT NULL,
+                    rank INTEGER NOT NULL,
+                    outfit_id TEXT,
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY (request_id, stage, rank)
+                );
                 CREATE INDEX IF NOT EXISTS requests_started_at_idx ON requests(started_at);
                 """
             )
@@ -206,6 +214,75 @@ class MonitoringService:
             db.execute(
                 f"UPDATE requests SET {count_column} = ? WHERE request_id = ?",
                 (len(records), request_id),
+            )
+
+    def record_generator_outfits(
+        self,
+        request_id: str | None,
+        stage: str,
+        outfits: list[dict[str, Any]],
+        catalog,
+    ) -> None:
+        """Persist the outfit candidates sent to generation or its final output."""
+        if not request_id:
+            return
+        if stage not in {"generator_input", "generator_output"}:
+            raise ValueError(f"Unsupported generator monitoring stage: {stage}")
+
+        records = []
+        for rank, outfit in enumerate(outfits, start=1):
+            monitored_items = []
+            for view in outfit.get("items", []):
+                garment_id = str(view.get("garment_id", ""))
+                if not garment_id:
+                    continue
+                item = catalog.items.get(garment_id, {})
+                generator_metadata = {
+                    key: value
+                    for key in ("category", "title", "description", "color", "style")
+                    if (value := item.get(key)) not in (None, "")
+                }
+                generator_metadata["garment_id"] = garment_id
+                monitored_items.append({
+                    "garment_id": garment_id,
+                    "image_url": view.get("image_url") or catalog.image_url(garment_id),
+                    "title": item.get("title") or view.get("title"),
+                    "category": item.get("category") or view.get("category"),
+                    "color": item.get("color") or view.get("color"),
+                    "metadata": {
+                        key: value for key, value in item.items() if value not in (None, "")
+                    },
+                    "generator_metadata": generator_metadata,
+                })
+            payload = {
+                "outfit_id": outfit.get("outfit_id"),
+                "name": outfit.get("name"),
+                "description": outfit.get("description"),
+                "explanation": outfit.get("explanation"),
+                "style_tags": outfit.get("style_tags", []),
+                "source_outfits": outfit.get("source_outfits", []),
+                "matched_garment_ids": outfit.get("matched_garment_ids", []),
+                "generated": bool(outfit.get("generated", False)),
+                "score": outfit.get("score"),
+                "items": monitored_items,
+            }
+            records.append((
+                request_id,
+                stage,
+                rank,
+                str(outfit.get("outfit_id") or ""),
+                json.dumps(payload, ensure_ascii=False),
+            ))
+
+        with self._connect() as db:
+            db.execute(
+                "DELETE FROM generator_outfits WHERE request_id = ? AND stage = ?",
+                (request_id, stage),
+            )
+            db.executemany(
+                """INSERT INTO generator_outfits(request_id, stage, rank, outfit_id, payload_json)
+                   VALUES (?, ?, ?, ?, ?)""",
+                records,
             )
 
     def record_llm_call_start(
@@ -362,6 +439,11 @@ class MonitoringService:
                 "SELECT stage, rank, payload_json FROM candidates WHERE request_id = ? ORDER BY stage, rank",
                 (request_id,),
             ).fetchall()
+            outfit_rows = db.execute(
+                """SELECT stage, rank, payload_json FROM generator_outfits
+                   WHERE request_id = ? ORDER BY stage, rank""",
+                (request_id,),
+            ).fetchall()
         result: dict[str, Any] = dict(request)
         raw_attributes = result.pop("query_attributes_json", None)
         raw_precision_criteria = result.pop("context_precision_criteria_json", None)
@@ -369,7 +451,13 @@ class MonitoringService:
         result["context_precision_criteria"] = json.loads(raw_precision_criteria) if raw_precision_criteria else []
         result["retrieved"] = []
         result["reranked"] = []
+        result["generator_input"] = []
+        result["generator_output"] = []
         for row in rows:
+            payload = json.loads(row["payload_json"])
+            payload["rank"] = row["rank"]
+            result[row["stage"]].append(payload)
+        for row in outfit_rows:
             payload = json.loads(row["payload_json"])
             payload["rank"] = row["rank"]
             result[row["stage"]].append(payload)

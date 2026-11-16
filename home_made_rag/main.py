@@ -71,9 +71,49 @@ async def lifespan(app: FastAPI):
     if generator_settings.get("enabled", False):
         # ITBA's LiteLLM proxy expects its own credential (LLM_API_KEY).
         # Keep OPENAI_API_KEY as a backwards-compatible fallback.
-        credential_name = "LLM_API_KEY" if os.getenv("LLM_API_KEY") else "OPENAI_API_KEY"
         api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
-        if api_key:
+        credential_name = "LLM_API_KEY" if os.getenv("LLM_API_KEY") else "OPENAI_API_KEY"
+        fallback_providers = []
+        for name in ("openrouter", "huggingface"):
+            fallback_settings = generator_settings.get("fallbacks", {}).get(name, {})
+            if not fallback_settings.get("enabled", True):
+                continue
+            credential_env = fallback_settings.get("api_key_env")
+            fallback_key = os.getenv(credential_env) if credential_env else None
+            if not fallback_key:
+                continue
+            model_env = fallback_settings.get("model_env")
+            fallback_provider = {
+                "name": name,
+                "api_key": fallback_key,
+                "model": (os.getenv(model_env) if model_env else None) or fallback_settings.get("model"),
+                "base_url": fallback_settings.get("base_url"),
+                "credential_source": credential_env,
+                "input_rate": fallback_settings.get("input_usd_per_million_tokens", 0.0),
+                "cached_input_rate": fallback_settings.get("cached_input_usd_per_million_tokens", 0.0),
+                "output_rate": fallback_settings.get("output_usd_per_million_tokens", 0.0),
+                "json_object_mode": fallback_settings.get("json_object_mode", False),
+                "max_completion_tokens": fallback_settings.get("max_completion_tokens", 1400),
+            }
+            extra_body = {}
+            if fallback_settings.get("require_parameters"):
+                extra_body["provider"] = {"require_parameters": True}
+            if fallback_settings.get("reasoning_effort"):
+                extra_body["reasoning_effort"] = fallback_settings["reasoning_effort"]
+            if extra_body:
+                fallback_provider["extra_body"] = extra_body
+            fallback_providers.append(fallback_provider)
+
+        openrouter_settings = generator_settings.get("fallbacks", {}).get("openrouter", {})
+        if openrouter_settings.get("enabled", True) and not os.getenv(
+            openrouter_settings.get("api_key_env", "OPENROUTER_API_KEY")
+        ):
+            logger.warning(
+                "OpenRouter free fallback is enabled but its API key is missing; "
+                "set OPENROUTER_API_KEY in .env."
+            )
+
+        if api_key or fallback_providers:
             generator = OutfitGenerator(
                 api_key=api_key,
                 model=os.getenv("OPENAI_MODEL", generator_settings.get("model", "gpt-4.1-mini")),
@@ -85,11 +125,17 @@ async def lifespan(app: FastAPI):
                 output_usd_per_million_tokens=generator_settings.get("output_usd_per_million_tokens", 1.6),
                 monitor=monitor,
                 credential_source=credential_name,
+                fallbacks=fallback_providers,
             )
-            logger.info("Outfit generator enabled (model=%s)", generator.model)
-            logger.info("Outfit generator credential loaded from %s", credential_name)
+            provider_order = ", ".join(
+                f"{provider['name']}:{provider['model']}" for provider in generator.providers
+            )
+            logger.info("Outfit generator fallback chain: %s", provider_order)
         else:
-            logger.warning("Generator is enabled but LLM_API_KEY/OPENAI_API_KEY is missing; using retrieval fallback")
+            logger.warning(
+                "Generator is enabled but no provider keys are set; using retrieval fallback. "
+                "Configure LLM_API_KEY, HF_TOKEN, or OPENROUTER_API_KEY."
+            )
 
     app.state.rag = RAG(
         embedding,

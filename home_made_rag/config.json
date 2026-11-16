@@ -71,6 +71,32 @@
     "enabled": true,
     "model": "gpt-4.1-mini",
     "base_url": "https://sa-llmproxy.it.itba.edu.ar/",
+    "fallbacks": {
+      "huggingface": {
+        "enabled": false,
+        "api_key_env": "HF_TOKEN",
+        "model_env": "HF_MODEL",
+        "model": "Qwen/Qwen3-32B",
+        "base_url": "https://router.huggingface.co/v1",
+        "input_usd_per_million_tokens": 0.0,
+        "cached_input_usd_per_million_tokens": 0.0,
+        "output_usd_per_million_tokens": 0.0
+      },
+      "openrouter": {
+        "enabled": true,
+        "api_key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+        "model": "openrouter/free",
+        "base_url": "https://openrouter.ai/api/v1",
+        "json_object_mode": true,
+        "require_parameters": true,
+        "reasoning_effort": "none",
+        "max_completion_tokens": 2800,
+        "input_usd_per_million_tokens": 0.0,
+        "cached_input_usd_per_million_tokens": 0.0,
+        "output_usd_per_million_tokens": 0.0
+      }
+    },
     "top_n_outfits": 10,
     "max_generated_outfits": 3,
     "timeout_seconds": 25,

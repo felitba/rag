@@ -97,10 +97,24 @@ el modelo, la cantidad de outfits de contexto y el máximo de sugerencias.
 La credencial del proxy se lee primero desde `LLM_API_KEY` (`OPENAI_API_KEY`
 queda como fallback para uso directo). `OPENAI_MODEL` y `OPENAI_BASE_URL`
 pueden sobrescribir el modelo y el proxy. Por defecto, el cliente usa
-`https://sa-llmproxy.it.itba.edu.ar/`. El color se estima al indexar si falta
-en el catálogo; `style` se omite cuando no está disponible. Si falta la key,
-falla OpenAI o la
-salida no pasa validación, la API devuelve los outfits recuperados.
+`https://sa-llmproxy.it.itba.edu.ar/`. También se pueden configurar fallbacks
+opcionales. El primero es OpenRouter: agregá `OPENROUTER_API_KEY` a `.env`; usa
+`openrouter/free` por defecto, sobrescribible con `OPENROUTER_MODEL`. Hugging Face
+queda desactivado por defecto porque sus créditos gratuitos son limitados. Si
+querés activarlo después de OpenRouter, configurá `HF_TOKEN`, opcionalmente
+`HF_MODEL` (por defecto `Qwen/Qwen3-32B`) y
+`generator.fallbacks.huggingface.enabled=true`. Se intenta el proveedor principal,
+luego cada fallback habilitado. La respuesta de cada modelo se valida contra el
+esquema y contra los IDs reales del catálogo antes de aceptarla. Si ningún
+proveedor responde con una combinación válida, la API devuelve los outfits
+recuperados.
+
+OpenRouter usa su ruta de modelos gratuitos por defecto; esos modelos tienen
+límites de uso y su disponibilidad puede variar. Hugging Face requiere un token
+propio y sus créditos gratuitos son limitados. Para activar un fallback, agregá
+su clave al `.env` y reiniciá el backend. Las tarifas estimadas de estos fallbacks
+están en cero por defecto; actualizalas en `generator.fallbacks` si cambiás a un
+modelo de pago.
 
 El log registra tokens de entrada/salida y el costo calculado según las tarifas
 por millón de tokens configuradas en `generator`. Actualizá esas tarifas cuando

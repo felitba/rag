@@ -188,27 +188,51 @@ class RAG:
             request_id=request_id,
             context_precision_result=context_precision,
         )
+        self._record_generator_outfits(request_id, "generator_input", retrieved)
 
         if not enabled:
+            self._record_generator_outfits(request_id, "generator_output", retrieved)
             return retrieved, "Outfits recuperados del catálogo.", "disabled", retrieved, query_attributes, context_precision
         if not has_generator:
+            self._record_generator_outfits(request_id, "generator_output", retrieved)
             return retrieved, "Outfits recuperados del catálogo; generación no disponible.", "unavailable", retrieved, query_attributes, context_precision
         if not retrieved:
+            self._record_generator_outfits(request_id, "generator_output", retrieved)
             return retrieved, "No encontramos suficientes outfits del catálogo para generar sugerencias.", "insufficient_candidates", retrieved, query_attributes, context_precision
 
         try:
-            generated = self.generator.generate(retrieved, prompt=text, request_id=request_id)
-            if not generated.get("outfits"):
-                explanation = generated.get("explanation") or "El catálogo recuperado no ofrece suficientes prendas para crear un conjunto nuevo."
-                return [], explanation, "insufficient_candidates", retrieved, query_attributes, context_precision
-            recommendations = self._resolve_generated(generated, retrieved)
-            if not recommendations:
-                raise ValueError("El generador no devolvió combinaciones válidas")
+            resolved_recommendations = []
+
+            def validate_generated_output(generated):
+                if not generated.get("outfits"):
+                    raise ValueError("El proveedor no propuso outfits utilizables")
+                resolved = self._resolve_generated(generated, retrieved)
+                if not resolved:
+                    raise ValueError("El proveedor no devolvió combinaciones válidas")
+                resolved_recommendations.extend(resolved)
+
+            generated = self.generator.generate(
+                retrieved,
+                prompt=text,
+                request_id=request_id,
+                validate_output=validate_generated_output,
+            )
+            recommendations = resolved_recommendations
+            self._record_generator_outfits(request_id, "generator_output", recommendations)
             explanation = generated.get("explanation") or "Sugerencias nuevas basadas en prendas de los outfits recuperados."
             return recommendations, explanation, "generated", retrieved, query_attributes, context_precision
         except Exception:
             logger.exception("Outfit generation failed; returning retrieved recommendations")
+            self._record_generator_outfits(request_id, "generator_output", retrieved)
             return retrieved, "La generación no estuvo disponible; mostramos los outfits recuperados del catálogo.", "fallback", retrieved, query_attributes, context_precision
+
+    def _record_generator_outfits(self, request_id, stage, outfits):
+        if not self.monitor:
+            return
+        try:
+            self.monitor.record_generator_outfits(request_id, stage, outfits, self.catalog)
+        except Exception:
+            logger.exception("Could not record %s outfits for monitoring", stage)
 
     def _resolve_generated(self, generated, candidates):
         candidate_outfits = {outfit["outfit_id"]: outfit for outfit in candidates}
@@ -230,7 +254,8 @@ class RAG:
                 or len(garment_ids) < 2
                 or len(set(garment_ids)) != len(garment_ids)
                 or not isinstance(source_ids, list)
-                or not source_ids
+                or len(set(source_ids)) != len(source_ids)
+                or len(source_ids) < 2
                 or any(item_id not in candidate_items for item_id in garment_ids)
                 or any(outfit_id not in candidate_outfits for outfit_id in source_ids)
             ):
@@ -242,6 +267,23 @@ class RAG:
             if not selected.issubset(cited_item_ids):
                 logger.warning("Discarding generated outfit whose garments are outside cited sources")
                 continue
+            contributing_sources = []
+            for outfit_id in source_ids:
+                other_source_items = set().union(*(
+                    source_item_ids[other_id]
+                    for other_id in source_ids
+                    if other_id != outfit_id
+                ))
+                exclusive_selected_items = selected.intersection(
+                    source_item_ids[outfit_id] - other_source_items
+                )
+                if exclusive_selected_items:
+                    contributing_sources.append(outfit_id)
+            if len(contributing_sources) < 2:
+                logger.warning(
+                    "Discarding generated outfit that does not combine garments from at least two source outfits"
+                )
+                continue
             if any(selected == source_item_ids[outfit_id] for outfit_id in candidate_outfits):
                 logger.info("Discarding generated outfit that duplicates a retrieved outfit")
                 continue
@@ -252,7 +294,7 @@ class RAG:
                 "description": draft.get("description") or "",
                 "explanation": draft.get("explanation") or "",
                 "style_tags": draft.get("style_tags", []),
-                "source_outfits": source_ids,
+                "source_outfits": contributing_sources,
                 "generated": True,
                 "score": None,
                 "matched_garment_ids": [],

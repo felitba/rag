@@ -84,6 +84,57 @@ function CandidateList({ title, candidates, stage }) {
   );
 }
 
+function GeneratorOutfitList({ title, outfits, stage }) {
+  return (
+    <section className="monitor-generator-stage">
+      <h3>{title}<span>{outfits.length} outfits</span></h3>
+      {!outfits.length ? <p className="monitor-muted">Sin outfits en esta etapa. Las requests anteriores a esta actualización no tienen este registro.</p> : (
+        <div className="monitor-generator-outfits">
+          {outfits.map((outfit, index) => (
+            <article className="monitor-generator-outfit" key={`${stage}-${outfit.outfit_id}-${index}`}>
+              <header>
+                <strong>#{outfit.rank || index + 1} · {outfit.name || outfit.outfit_id}</strong>
+                <span>{outfit.generated ? "Generado" : "Catálogo"}</span>
+              </header>
+              <p className="monitor-generator-ids">
+                ID: {outfit.outfit_id || "s/d"}
+                {outfit.score !== null && outfit.score !== undefined && ` · score ${formatNumber(outfit.score, 4)}`}
+              </p>
+              {outfit.description && <p className="monitor-description">{outfit.description}</p>}
+              {outfit.explanation && <p className="monitor-generator-explanation">{outfit.explanation}</p>}
+              {outfit.matched_garment_ids?.length > 0 && (
+                <p className="monitor-generator-ids">Prendas que coincidieron con la consulta: {outfit.matched_garment_ids.join(", ")}</p>
+              )}
+              {outfit.source_outfits?.length > 0 && (
+                <p className="monitor-generator-ids">Outfits fuente: {outfit.source_outfits.join(", ")}</p>
+              )}
+              <div className="monitor-generator-items">
+                {(outfit.items || []).map((item) => (
+                  <article className="monitor-generator-item" key={item.garment_id}>
+                    <img src={`${API_BASE}${item.image_url}`} alt={item.title || item.garment_id} loading="lazy" />
+                    <div>
+                      <strong>{item.title || item.garment_id}</strong>
+                      <span>{item.garment_id} · {item.category || "Categoría desconocida"} · {item.color || "Color desconocido"}</span>
+                      <details>
+                        <summary>Metadata completa del catálogo</summary>
+                        <pre>{JSON.stringify(item.metadata || {}, null, 2)}</pre>
+                      </details>
+                      <details>
+                        <summary>Campos enviados al generador</summary>
+                        <pre>{JSON.stringify(item.generator_metadata || {}, null, 2)}</pre>
+                      </details>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function MonitoringDashboard() {
   const [summary, setSummary] = useState(null);
   const [requests, setRequests] = useState([]);
@@ -249,6 +300,25 @@ export default function MonitoringDashboard() {
                 <CandidateList title="Antes del reranking" candidates={detail.retrieved || []} stage="retrieved" />
                 <CandidateList title="Después del reranking" candidates={detail.reranked || []} stage="reranked" />
               </div>
+              <section className="monitor-generator-section">
+                <div className="monitor-generator-heading">
+                  <div>
+                    <p className="eyebrow">ETAPA DEL GENERADOR</p>
+                    <h2>Outfits antes y después del generador</h2>
+                  </div>
+                  <span>Estado: {detail.generation_status || "en curso"}</span>
+                </div>
+                <p className="monitor-generator-note">
+                  {detail.llm_calls > 0
+                    ? "Antes: outfits recuperados después del reranking y enviados como contexto al modelo."
+                    : "Antes: outfits recuperados después del reranking; esta request no registró una llamada al modelo."}
+                  {" "}Después: resultado final que devolvió la API; si la generación falla o está desactivada, se muestran los outfits recuperados.
+                </p>
+                <div className="monitor-generator-grid">
+                  <GeneratorOutfitList title="Antes del generador" outfits={detail.generator_input || []} stage="generator-input" />
+                  <GeneratorOutfitList title="Después del generador" outfits={detail.generator_output || []} stage="generator-output" />
+                </div>
+              </section>
             </>
           )}
         </section>
