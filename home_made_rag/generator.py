@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
@@ -40,12 +41,18 @@ class OutfitGenerator:
         input_usd_per_million_tokens: float = 0.4,
         cached_input_usd_per_million_tokens: float = 0.1,
         output_usd_per_million_tokens: float = 1.6,
+        monitor=None,
+        credential_source: str | None = None,
     ) -> None:
         self.model = model
         self.max_generated_outfits = max(1, max_generated_outfits)
         self.input_rate = input_usd_per_million_tokens
         self.cached_input_rate = cached_input_usd_per_million_tokens
         self.output_rate = output_usd_per_million_tokens
+        self.monitor = monitor
+        self.credential_source = credential_source
+        # Stable, non-reversible identifier for usage breakdowns; never persist the key.
+        self.credential_fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -57,6 +64,7 @@ class OutfitGenerator:
         self,
         candidates: list[dict[str, Any]],
         prompt: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         """Generate new outfits; candidate items must already be catalog resolved."""
         context = self._context(candidates)
@@ -81,6 +89,16 @@ class OutfitGenerator:
             separators=(",", ":"),
         )
 
+        if self.monitor:
+            try:
+                self.monitor.record_llm_call_start(
+                    request_id,
+                    self.model,
+                    self.credential_source,
+                    self.credential_fingerprint,
+                )
+            except Exception:
+                logger.exception("Could not record LLM call start")
         try:
             response = self.client.chat.completions.parse(
                 model=self.model,
@@ -93,13 +111,18 @@ class OutfitGenerator:
                 max_completion_tokens=1400,
             )
         except Exception as exc:
+            if self.monitor:
+                try:
+                    self.monitor.record_llm_call_error(request_id)
+                except Exception:
+                    logger.exception("Could not record LLM call error")
             logger.warning(
                 "OpenAI generation request failed model=%s error_type=%s; cost unavailable",
                 self.model,
                 type(exc).__name__,
             )
             raise
-        self._log_usage(response)
+        self._log_usage(response, request_id=request_id)
         parsed = response.choices[0].message.parsed
         if parsed is None:
             refusal = response.choices[0].message.refusal
@@ -136,7 +159,7 @@ class OutfitGenerator:
             })
         return {"outfits": outfits, "garments": list(garments.values())}
 
-    def _log_usage(self, response: Any) -> None:
+    def _log_usage(self, response: Any, request_id: str | None = None) -> None:
         usage = response.usage
         if usage is None:
             logger.warning("OpenAI generation completed without token usage; cost unavailable")
@@ -150,6 +173,17 @@ class OutfitGenerator:
             + cached_tokens * self.cached_input_rate
             + output_tokens * self.output_rate
         ) / 1_000_000
+        if self.monitor:
+            try:
+                self.monitor.record_llm_usage(
+                    request_id,
+                    input_tokens=input_tokens,
+                    cached_input_tokens=cached_tokens,
+                    output_tokens=output_tokens,
+                    estimated_cost_usd=cost,
+                )
+            except Exception:
+                logger.exception("Could not record LLM token usage")
         logger.info(
             "OpenAI generation usage model=%s input_tokens=%d cached_input_tokens=%d "
             "output_tokens=%d estimated_cost_usd=%.8f",

@@ -16,6 +16,7 @@ class RAG:
         generator=None,
         attribute_classifier=None,
         hybrid_reranker=None,
+        monitor=None,
     ):
         self.embedding = embedding
         self.chroma = chroma
@@ -23,6 +24,7 @@ class RAG:
         self.generator = generator
         self.attribute_classifier = attribute_classifier
         self.hybrid_reranker = hybrid_reranker or HybridGarmentReranker()
+        self.monitor = monitor
 
     def classify_query_image(self, image_path):
         category = None
@@ -107,6 +109,7 @@ class RAG:
         max_outfits=None,
         query_attributes=None,
         return_query_attributes=False,
+        request_id=None,
     ):
         if image_path is not None:
             query_embedding = self.embedding.embed_image(image_path)
@@ -116,9 +119,19 @@ class RAG:
             raise ValueError("Se necesita una imagen o un texto para recomendar")
 
         matches = self._search(query_embedding, CONFIG["vector_store"]["top_k"])
+        if self.monitor:
+            try:
+                self.monitor.record_candidates(request_id, "retrieved", matches, self.catalog)
+            except Exception:
+                logger.exception("Could not record pre-reranking candidates")
         if image_path is not None and query_attributes is None:
             query_attributes = self.classify_query_image(image_path)
         matches = self.hybrid_reranker.rerank(matches, query_attributes)
+        if self.monitor:
+            try:
+                self.monitor.record_candidates(request_id, "reranked", matches, self.catalog)
+            except Exception:
+                logger.exception("Could not record post-reranking candidates")
         outfits = self._collect_outfits(
             matches,
             max_outfits if max_outfits is not None else CONFIG["retrieval"]["max_outfits"],
@@ -127,7 +140,7 @@ class RAG:
             return outfits, query_attributes
         return outfits
 
-    def recommend_with_generation(self, image_path=None, text=None, query_attributes=None):
+    def recommend_with_generation(self, image_path=None, text=None, query_attributes=None, request_id=None):
         """Run retrieval once, then generate catalog-grounded suggestions when available."""
         settings = CONFIG.get("generator", {})
         enabled = bool(settings.get("enabled", False))
@@ -142,6 +155,7 @@ class RAG:
             max_outfits=candidate_limit,
             query_attributes=query_attributes,
             return_query_attributes=True,
+            request_id=request_id,
         )
 
         if not enabled:
@@ -152,7 +166,7 @@ class RAG:
             return retrieved, "No encontramos suficientes outfits del catálogo para generar sugerencias.", "insufficient_candidates", retrieved, query_attributes
 
         try:
-            generated = self.generator.generate(retrieved, prompt=text)
+            generated = self.generator.generate(retrieved, prompt=text, request_id=request_id)
             if not generated.get("outfits"):
                 explanation = generated.get("explanation") or "El catálogo recuperado no ofrece suficientes prendas para crear un conjunto nuevo."
                 return [], explanation, "insufficient_candidates", retrieved, query_attributes

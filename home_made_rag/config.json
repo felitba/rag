@@ -40,6 +40,11 @@
       "category": 0.25
     }
   },
+  "monitoring": {
+    "enabled": true,
+    "database_path": "storage/monitoring.sqlite3",
+    "retention_days": 30
+  },
   "retrieval": {
     "max_outfits": 5,
     "deduplicate_outfits": true,

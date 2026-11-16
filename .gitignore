@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 storage/chroma/
+storage/monitoring.sqlite3*
 storage/uploads/*
 !storage/uploads/.gitkeep
 .DS_Store

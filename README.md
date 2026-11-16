@@ -69,6 +69,22 @@ El log registra tokens de entrada/salida y el costo calculado según las tarifas
 por millón de tokens configuradas en `generator`. Actualizá esas tarifas cuando
 cambies de modelo o modalidad de facturación.
 
+### Monitor local
+
+Con `monitoring.enabled`, cada llamada a `/api/recommend` registra un request ID,
+estado y latencia; también guarda los candidatos y sus metadatos antes y después
+del re-ranking. Si se usa el generador, registra llamadas, tokens y costo
+estimado según las tarifas de `generator`, con un desglose por variable de entorno
+y una huella SHA-256 truncada para distinguir claves rotadas. El historial se
+guarda durante 30 días en `storage/monitoring.sqlite3`; no conserva imágenes ni
+claves API.
+
+Con el frontend local iniciado, abrí `http://localhost:5173/monitor`. También
+están disponibles `/api/monitor/summary`, `/api/monitor/requests` y
+`/api/monitor/requests/{request_id}`. El costo es una estimación de esta
+aplicación; el monitor no consulta saldo, cuota ni uso facturado en la cuenta del
+proveedor.
+
 ## Estructura
 
 ```text

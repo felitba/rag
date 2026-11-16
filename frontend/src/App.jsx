@@ -227,7 +227,7 @@ export default function App() {
 
       <footer>
         <span>FORMA STUDIO</span>
-        <span>Recomendaciones basadas en el catálogo disponible.</span>
+        <span>Recomendaciones basadas en el catálogo disponible. <a href="/monitor">Monitor</a></span>
       </footer>
     </div>
   );
