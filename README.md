@@ -5,7 +5,7 @@ Proyecto de referencia para recibir una foto de una prenda, encontrar prendas vi
 ## Arquitectura
 
 1. **Indexación offline:** CLIP genera un embedding por imagen del catálogo y una rutina visual estima su color dominante. La categoría existente del dataset se conserva. ChromaDB guarda embeddings y los metadatos `category` y `color`.
-2. **Consulta visual:** el usuario sube una imagen. CLIP recupera candidatos por embedding; el sistema estima el color de la consulta y clasifica su categoría dentro de las categorías presentes en el catálogo.
+2. **Consulta visual:** el usuario sube una imagen. Un segmentador local quita el fondo y centra el objeto sobre un fondo neutro; esa misma imagen procesada se usa para el embedding, la categoría y el color.
 3. **Recuperación de outfits:** Python aplica el re-ranking híbrido a las prendas similares y las traduce a IDs de outfit. `outfits.json` es la fuente canónica para la composición de los looks.
 4. **Generación opcional:** `OutfitGenerator` recibe los outfits candidatos y metadatos permitidos del catálogo, y propone nuevas combinaciones con IDs estructurados.
 5. **Validación y frontend:** `RAG` valida los IDs y resuelve las prendas desde el catálogo original; React muestra las recomendaciones y explicaciones.
@@ -47,6 +47,12 @@ La respuesta incluye las estimaciones de categoría/color, las componentes del
 ranking y una comparación orientativa con los metadatos de los garments
 recuperados. Las similitudes del clasificador son relativas a las categorías
 del catálogo.
+
+La eliminación del fondo está configurada en `image_preprocessing` y usa
+`rembg` con el modelo local U²-Net. El modelo se descarga la primera vez que se
+procesa una foto y se reutiliza; la imagen procesada vive en memoria y no se
+guarda. Si la segmentación falla, la request continúa con la imagen original.
+Se puede desactivar con `image_preprocessing.enabled: false`.
 
 ### Clasificación visual de la consulta
 

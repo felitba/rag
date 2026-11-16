@@ -22,14 +22,20 @@ class ClipEmbedding:
         self.model.float()
         self.model.eval()
 
-    def embed_image(self, image_path: str | Path) -> list[float]:
+    def embed_image(self, image_path: Image.Image | str | Path) -> list[float]:
         return self.embed_images([image_path])[0]
 
-    def embed_images(self, paths: Iterable[str | Path]) -> list[list[float]]:
+    def embed_images(self, paths: Iterable[Image.Image | str | Path]) -> list[list[float]]:
         """Embed one batch of images, preserving input order."""
         tensors = []
         
-        for image_path in paths:
+        for image_source in paths:
+            if isinstance(image_source, Image.Image):
+                image = ImageOps.exif_transpose(image_source).convert("RGB")
+                tensors.append(self.preprocess(image))
+                continue
+
+            image_path = image_source
             path = Path(image_path)
             
             if not path.is_file():

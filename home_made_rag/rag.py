@@ -17,6 +17,7 @@ class RAG:
         attribute_classifier=None,
         hybrid_reranker=None,
         monitor=None,
+        image_preprocessor=None,
     ):
         self.embedding = embedding
         self.chroma = chroma
@@ -25,6 +26,7 @@ class RAG:
         self.attribute_classifier = attribute_classifier
         self.hybrid_reranker = hybrid_reranker or HybridGarmentReranker()
         self.monitor = monitor
+        self.image_preprocessor = image_preprocessor
 
     def classify_query_image(self, image_path):
         category = None
@@ -112,7 +114,12 @@ class RAG:
         request_id=None,
     ):
         if image_path is not None:
-            query_embedding = self.embedding.embed_image(image_path)
+            query_image = (
+                self.image_preprocessor.process(image_path)
+                if self.image_preprocessor is not None
+                else image_path
+            )
+            query_embedding = self.embedding.embed_image(query_image)
         elif text:
             query_embedding = self.embedding.embed_text(text)
         else:
@@ -125,7 +132,7 @@ class RAG:
             except Exception:
                 logger.exception("Could not record pre-reranking candidates")
         if image_path is not None and query_attributes is None:
-            query_attributes = self.classify_query_image(image_path)
+            query_attributes = self.classify_query_image(query_image)
         matches = self.hybrid_reranker.rerank(matches, query_attributes)
         if self.monitor:
             try:

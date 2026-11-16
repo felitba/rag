@@ -18,6 +18,7 @@ from home_made_rag.config import CONFIG, IMAGES_DIR, MONITORING_DB
 from home_made_rag.embedding import ClipEmbedding
 from home_made_rag.fashion_clip_classifier import FashionClipCategoryClassifier
 from home_made_rag.generator import OutfitGenerator
+from home_made_rag.image_preprocessing import ForegroundPreprocessor
 from home_made_rag.monitoring import MonitoringService
 from home_made_rag.rag import RAG
 
@@ -40,6 +41,14 @@ async def lifespan(app: FastAPI):
     catalog = Catalog()
     embedding = ClipEmbedding()
     chroma = ChromaDB()
+    image_settings = CONFIG.get("image_preprocessing", {})
+    image_preprocessor = ForegroundPreprocessor(
+        enabled=image_settings.get("enabled", True),
+        model_name=image_settings.get("model_name", "u2net"),
+        max_side=image_settings.get("max_side", 1024),
+        background_color=image_settings.get("background_color", "#f1f0ec"),
+        padding_ratio=image_settings.get("padding_ratio", 0.10),
+    )
     monitor_settings = CONFIG.get("monitoring", {})
     monitor = None
     if monitor_settings.get("enabled", True):
@@ -89,6 +98,7 @@ async def lifespan(app: FastAPI):
         generator=generator,
         attribute_classifier=attribute_classifier,
         monitor=monitor,
+        image_preprocessor=image_preprocessor,
     )
     app.state.monitor = monitor
     logger.info("Ready. Indexed garments: %d", chroma.count())

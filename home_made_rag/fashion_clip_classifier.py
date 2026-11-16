@@ -87,10 +87,13 @@ class FashionClipCategoryClassifier:
         self._model: CLIPModel | None = None
         self._processor: CLIPProcessor | None = None
 
-    def classify(self, image_path: str | Path) -> dict[str, Any]:
+    def classify(self, image_path: Image.Image | str | Path) -> dict[str, Any]:
         model, processor = self._get_model()
-        with Image.open(image_path) as opened:
-            image = ImageOps.exif_transpose(opened).convert("RGB")
+        if isinstance(image_path, Image.Image):
+            image = ImageOps.exif_transpose(image_path).convert("RGB")
+        else:
+            with Image.open(image_path) as opened:
+                image = ImageOps.exif_transpose(opened).convert("RGB")
         inputs = processor(images=self._image_views(image), return_tensors="pt").to(self.device)
         prompts_by_label = [self._prompts(label) for label in self.labels]
         prompts = [prompt for group in prompts_by_label for prompt in group]

@@ -11,7 +11,7 @@ from typing import Any
 from PIL import Image, ImageOps
 
 
-def estimate_garment_color(image_path: str | Path) -> dict[str, str | float]:
+def estimate_garment_color(image_path: Image.Image | str | Path) -> dict[str, str | float]:
     """Return a dominant palette label, confidence, and representative RGB.
 
     The estimator downsamples the image, masks a flat background connected to
@@ -19,8 +19,11 @@ def estimate_garment_color(image_path: str | Path) -> dict[str, str | float]:
     the most frequent palette label. Confidence is the share of retained pixels
     assigned to that label; it is not a calibrated probability.
     """
-    with Image.open(image_path) as opened:
-        image = ImageOps.exif_transpose(opened).convert("RGB")
+    if isinstance(image_path, Image.Image):
+        image = ImageOps.exif_transpose(image_path).convert("RGB")
+    else:
+        with Image.open(image_path) as opened:
+            image = ImageOps.exif_transpose(opened).convert("RGB")
     image.thumbnail((128, 128))
 
     pixels = list(image.getdata())

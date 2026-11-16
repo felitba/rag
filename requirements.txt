@@ -3,6 +3,7 @@ uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 python-dotenv>=1.0.0
 Pillow>=10.0.0
+rembg[cpu]>=2.0.68
 olefile>=0.47
 chromadb>=1.0.0
 langchain-core>=1.0.0
