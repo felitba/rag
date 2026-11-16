@@ -42,6 +42,15 @@ reranker les asigna un color representativo de la etiqueta como fallback. Para
 usar los RGB medidos por prenda, corré `python scripts/index_catalog.py` y
 reconstruí el índice.
 
+`context_precision` se calcula como AP@k en la lista recuperada y en la lista
+rerankeada. La relevancia es un proxy automático: exige que coincida la
+categoría estimada cuando FashionCLIP la considera confiable y que la similitud
+de color supere `context_precision.color_similarity_threshold` cuando hay color
+disponible. La respuesta de `/api/recommend` incluye el resultado antes y después
+del reranking; el monitor también muestra qué prendas se marcaron relevantes en
+cada etapa. No es ground truth ni una evaluación humana; sirve para observar
+cambios de ranking con el criterio de metadata configurado.
+
 FashionCLIP se carga de forma diferida cuando llega la primera consulta visual.
 La respuesta incluye las estimaciones de categoría/color, las componentes del
 ranking y una comparación orientativa con los metadatos de los garments

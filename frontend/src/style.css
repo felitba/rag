@@ -57,21 +57,12 @@ form { display: flex; flex-direction: column; align-items: flex-start; gap: 12px
 .explanation { display: flex; gap: 14px; padding: 20px 22px; background: #eeeee5; margin-bottom: 28px; align-items: flex-start; }
 .explanation-mark { color: var(--accent); font-size: 20px; }
 .explanation p { font-size: 13px; line-height: 1.75; margin: 0; white-space: pre-wrap; }
-.attribute-analysis { background: var(--paper); border: 1px solid var(--line); padding: 18px 22px; margin: 0 0 28px; }
-.attribute-analysis .eyebrow { margin-bottom: 10px; }
-.attribute-values { display: flex; flex-wrap: wrap; gap: 10px 24px; font-size: 13px; }
-.attribute-values strong { text-transform: capitalize; }
-.attribute-note { color: var(--muted); font-size: 11px; margin: 9px 0 0; }
-.metadata-check { margin-top: 16px; font-size: 12px; }
-.metadata-check > strong { display: block; margin-bottom: 8px; }
-.metadata-match-row { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-top: 1px solid var(--line); color: var(--muted); }
-.metadata-match-row span:last-child { text-align: right; }
 .monitor-page { width: min(1500px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 48px; }
 .monitor-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--line); padding-bottom: 22px; }
 .monitor-header h1 { font-size: clamp(34px, 4vw, 52px); margin: 0 0 10px; }
 .monitor-header p:not(.eyebrow) { color: var(--muted); font-size: 13px; }
 .monitor-header a, .monitor-section-heading button { color: var(--accent); font: inherit; font-size: 12px; }
-.monitor-metrics { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; margin: 22px 0; }
+.monitor-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 22px 0; }
 .monitor-metrics article { background: var(--paper); border: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 .monitor-metrics span { color: var(--muted); font-size: 10px; }
 .monitor-metrics small { color: var(--muted); font-size: 9px; }
@@ -80,6 +71,11 @@ form { display: flex; flex-direction: column; align-items: flex-start; gap: 12px
 .monitor-credential-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
 .monitor-credential-card { display: grid; gap: 6px; padding: 14px; border: 1px solid var(--line); background: var(--paper); color: var(--muted); font-size: 13px; }
 .monitor-credential-card strong { color: #25231f; overflow-wrap: anywhere; }
+.monitor-relevance { margin: 6px 0; padding: 6px 8px; font-size: 10px; }
+.monitor-relevance.relevant { background: #e8efe5; color: #35523a; }
+.monitor-relevance.not-relevant { background: #f5ece7; color: #87503e; }
+.monitor-context-precision { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding: 12px; background: #f1f1ea; font-size: 11px; }
+.monitor-context-precision span, .monitor-context-precision small { color: var(--muted); }
 .monitor-layout { display: grid; grid-template-columns: minmax(270px, 340px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .monitor-request-panel, .monitor-detail-panel { background: var(--paper); border: 1px solid var(--line); min-width: 0; }
 .monitor-request-panel { padding: 16px; }
@@ -152,9 +148,6 @@ footer span:first-child { letter-spacing: .14em; color: #343a31; font-weight: 70
   .outfit-card { padding: 16px; }
   .results-section { padding-top: 55px; }
   footer { flex-direction: column; }
-  .attribute-analysis { padding: 16px; }
-  .metadata-match-row { flex-direction: column; gap: 3px; }
-  .metadata-match-row span:last-child { text-align: left; }
   .monitor-page { width: min(100% - 24px, 760px); padding-top: 20px; }
   .monitor-header, .monitor-detail-heading { flex-direction: column; }
   .monitor-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

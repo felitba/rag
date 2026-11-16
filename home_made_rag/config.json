@@ -53,6 +53,9 @@
       "coverage_weight": 0.25
     }
   },
+  "context_precision": {
+    "color_similarity_threshold": 0.65
+  },
   "monitoring": {
     "enabled": true,
     "database_path": "storage/monitoring.sqlite3",

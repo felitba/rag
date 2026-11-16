@@ -100,6 +100,28 @@ def color_coverage_similarity(
     return round(1.0 - abs(query_share - candidate_share), 6)
 
 
+def combined_color_similarity(
+    query: dict[str, Any] | None,
+    candidate: dict[str, Any] | None,
+    *,
+    delta_e_scale: float = 40.0,
+    tone_weight: float = 0.75,
+    coverage_weight: float = 0.25,
+) -> dict[str, float | None]:
+    tone = color_similarity(query, candidate, delta_e_scale=delta_e_scale)
+    coverage = color_coverage_similarity(query, candidate)
+    parts = ((tone, tone_weight), (coverage, coverage_weight))
+    available_weight = sum(weight for value, weight in parts if value is not None)
+    score = None
+    if tone is not None and available_weight > 0:
+        score = round(
+            sum(value * weight for value, weight in parts if value is not None)
+            / available_weight,
+            6,
+        )
+    return {"score": score, "tone": tone, "coverage": coverage}
+
+
 def _rgb_for_color(color: dict[str, Any]) -> tuple[float, float, float] | None:
     channels = tuple(color.get(f"color_{channel}") for channel in "rgb")
     if all(isinstance(value, (int, float)) for value in channels):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from home_made_rag.config import CONFIG
-from home_made_rag.color_metadata import color_coverage_similarity, color_similarity
+from home_made_rag.color_metadata import combined_color_similarity
 
 
 class HybridGarmentReranker:
@@ -45,27 +45,16 @@ class HybridGarmentReranker:
                 "color_b": match.get("color_b"),
                 "color_confidence": match.get("color_confidence"),
             }
-            color_tone = color_similarity(
+            color_parts = combined_color_similarity(
                 query_color,
                 candidate_color,
                 delta_e_scale=self.color_delta_e_scale,
+                tone_weight=self.color_tone_weight,
+                coverage_weight=self.color_coverage_weight,
             )
-            color_coverage = color_coverage_similarity(query_color, candidate_color)
-            color_parts = (
-                (color_tone, self.color_tone_weight),
-                (color_coverage, self.color_coverage_weight),
-            )
-            available_color_weight = sum(
-                weight for value, weight in color_parts if value is not None
-            )
-            color_score = None
-            if color_tone is not None and available_color_weight > 0:
-                color_score = sum(
-                    value * weight for value, weight in color_parts if value is not None
-                ) / available_color_weight
             components: dict[str, float | None] = {
                 "cosine_similarity": cosine_similarity,
-                "color": color_score,
+                "color": color_parts["score"],
                 "category": self._exact_match(query_category, match.get("category")),
             }
             available_weight = sum(
@@ -80,8 +69,8 @@ class HybridGarmentReranker:
             reranked_match["rerank_score"] = round(score, 6)
             reranked_match["rerank_components"] = {
                 **components,
-                "color_tone_similarity": color_tone,
-                "color_coverage_similarity": color_coverage,
+                "color_tone_similarity": color_parts["tone"],
+                "color_coverage_similarity": color_parts["coverage"],
             }
             reranked.append(reranked_match)
 

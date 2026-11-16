@@ -3,6 +3,7 @@ import logging
 
 from home_made_rag.config import CONFIG
 from home_made_rag.color_metadata import estimate_garment_color
+from home_made_rag.context_precision import evaluate_context_precision
 from home_made_rag.hybrid_reranker import HybridGarmentReranker
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ class RAG:
         query_attributes=None,
         return_query_attributes=False,
         request_id=None,
+        context_precision_result=None,
     ):
         if image_path is not None:
             query_image = (
@@ -126,14 +128,34 @@ class RAG:
             raise ValueError("Se necesita una imagen o un texto para recomendar")
 
         matches = self._search(query_embedding, CONFIG["vector_store"]["top_k"])
+        if image_path is not None and query_attributes is None:
+            query_attributes = self.classify_query_image(query_image)
+        retrieved_precision = evaluate_context_precision(matches, query_attributes, self.catalog)
+        matches = retrieved_precision["annotated_matches"]
         if self.monitor:
             try:
                 self.monitor.record_candidates(request_id, "retrieved", matches, self.catalog)
             except Exception:
                 logger.exception("Could not record pre-reranking candidates")
-        if image_path is not None and query_attributes is None:
-            query_attributes = self.classify_query_image(query_image)
         matches = self.hybrid_reranker.rerank(matches, query_attributes)
+        reranked_precision = evaluate_context_precision(matches, query_attributes, self.catalog)
+        matches = reranked_precision["annotated_matches"]
+        context_metrics = {
+            "retrieved": retrieved_precision["score"],
+            "reranked": reranked_precision["score"],
+            "available": retrieved_precision["available"],
+            "k": retrieved_precision["k"],
+            "relevant_count": retrieved_precision["relevant_count"],
+            "criteria": retrieved_precision["criteria"],
+            "color_similarity_threshold": retrieved_precision["color_similarity_threshold"],
+        }
+        if context_precision_result is not None:
+            context_precision_result.update(context_metrics)
+        if self.monitor:
+            try:
+                self.monitor.set_context_precision(request_id, context_metrics)
+            except Exception:
+                logger.exception("Could not record context precision")
         if self.monitor:
             try:
                 self.monitor.record_candidates(request_id, "reranked", matches, self.catalog)
@@ -156,6 +178,7 @@ class RAG:
             settings.get("top_n_outfits", CONFIG["retrieval"]["max_outfits"])
             if enabled and has_generator else None
         )
+        context_precision = {}
         retrieved, query_attributes = self.recommend(
             image_path=image_path,
             text=text,
@@ -163,28 +186,29 @@ class RAG:
             query_attributes=query_attributes,
             return_query_attributes=True,
             request_id=request_id,
+            context_precision_result=context_precision,
         )
 
         if not enabled:
-            return retrieved, "Outfits recuperados del catálogo.", "disabled", retrieved, query_attributes
+            return retrieved, "Outfits recuperados del catálogo.", "disabled", retrieved, query_attributes, context_precision
         if not has_generator:
-            return retrieved, "Outfits recuperados del catálogo; generación no disponible.", "unavailable", retrieved, query_attributes
+            return retrieved, "Outfits recuperados del catálogo; generación no disponible.", "unavailable", retrieved, query_attributes, context_precision
         if not retrieved:
-            return retrieved, "No encontramos suficientes outfits del catálogo para generar sugerencias.", "insufficient_candidates", retrieved, query_attributes
+            return retrieved, "No encontramos suficientes outfits del catálogo para generar sugerencias.", "insufficient_candidates", retrieved, query_attributes, context_precision
 
         try:
             generated = self.generator.generate(retrieved, prompt=text, request_id=request_id)
             if not generated.get("outfits"):
                 explanation = generated.get("explanation") or "El catálogo recuperado no ofrece suficientes prendas para crear un conjunto nuevo."
-                return [], explanation, "insufficient_candidates", retrieved, query_attributes
+                return [], explanation, "insufficient_candidates", retrieved, query_attributes, context_precision
             recommendations = self._resolve_generated(generated, retrieved)
             if not recommendations:
                 raise ValueError("El generador no devolvió combinaciones válidas")
             explanation = generated.get("explanation") or "Sugerencias nuevas basadas en prendas de los outfits recuperados."
-            return recommendations, explanation, "generated", retrieved, query_attributes
+            return recommendations, explanation, "generated", retrieved, query_attributes, context_precision
         except Exception:
             logger.exception("Outfit generation failed; returning retrieved recommendations")
-            return retrieved, "La generación no estuvo disponible; mostramos los outfits recuperados del catálogo.", "fallback", retrieved, query_attributes
+            return retrieved, "La generación no estuvo disponible; mostramos los outfits recuperados del catálogo.", "fallback", retrieved, query_attributes, context_precision
 
     def _resolve_generated(self, generated, candidates):
         candidate_outfits = {outfit["outfit_id"]: outfit for outfit in candidates}

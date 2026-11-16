@@ -11,15 +11,6 @@ function money(value) {
   }).format(value);
 }
 
-function alignmentLabel(alignment) {
-  return {
-    match: "Coincide en categoría y color",
-    category_only: "Coincide en categoría; falta dato de color",
-    mismatch: "No coincide con los atributos detectados",
-    unknown: "Sin datos suficientes para comparar",
-  }[alignment] || "Sin datos suficientes para comparar";
-}
-
 export default function App() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -159,48 +150,6 @@ export default function App() {
               <div className="explanation">
                 <span className="explanation-mark">✳</span>
                 <p>{results.explanation}</p>
-              </div>
-            )}
-
-            {results.query_attributes && (
-              <div className="attribute-analysis">
-                <p className="eyebrow">LECTURA VISUAL DE LA FOTO</p>
-                <div className="attribute-values">
-                  <span>Prenda: <strong>{results.query_attributes.category?.label || (results.query_attributes.category?.uncertain ? "Estimación dudosa" : "No clasificada")}</strong></span>
-                  <span>Color: <strong>{results.query_attributes.color?.color || "Sin estimación"}</strong></span>
-                  {results.query_attributes.color?.color_confidence !== undefined && (
-                    <span>Cobertura del color dominante: <strong>{(results.query_attributes.color.color_confidence * 100).toFixed(1)}%</strong></span>
-                  )}
-                </div>
-                {results.query_attributes.category?.similarity !== undefined && (
-                  <p className="attribute-note">
-                    Mejor similitud: {results.query_attributes.category.similarity.toFixed(3)} · margen entre las dos mejores: {results.query_attributes.category.margin.toFixed(3)}
-                  </p>
-                )}
-                {results.query_attributes.category?.uncertain && (
-                  <p className="attribute-note">
-                    FashionCLIP no encontró una categoría suficientemente clara; no se usó la categoría para reordenar resultados.
-                    {results.query_attributes.category.best_label && ` La mejor candidata fue ${results.query_attributes.category.best_label}.`}
-                  </p>
-                )}
-                {results.query_attributes.category?.alternatives?.length > 0 && (
-                  <p className="attribute-note">
-                    {results.query_attributes.category.uncertain ? "Categorías candidatas" : "Otras categorías candidatas"}: {results.query_attributes.category.alternatives
-                      .map((candidate) => `${candidate.label} (${candidate.similarity})`).join(" · ")}
-                  </p>
-                )}
-                <p className="attribute-note">FashionCLIP combina varias descripciones por categoría; los scores y el margen son similitudes relativas, no probabilidades.</p>
-                {results.retrieved_metadata_matches?.length > 0 && (
-                  <div className="metadata-check">
-                    <strong>Chequeo orientativo contra metadatos recuperados</strong>
-                    {results.retrieved_metadata_matches.map((match) => (
-                      <div className="metadata-match-row" key={match.garment_id}>
-                        <span>{match.title || match.garment_id}</span>
-                        <span>{alignmentLabel(match.alignment)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             )}
 

@@ -14,6 +14,12 @@ function formatMoney(value) {
   }).format(value || 0);
 }
 
+function formatPercent(value) {
+  return value === null || value === undefined
+    ? "—"
+    : `${formatNumber(value * 100, 1)}%`;
+}
+
 function formatDate(value) {
   return value ? new Date(value).toLocaleString("es-AR") : "En curso";
 }
@@ -43,6 +49,13 @@ function CandidateList({ title, candidates, stage }) {
                     <span>color píxeles {formatNumber(item.color_confidence * 100, 1)}%</span>
                   )}
                 </div>
+                {item.context_relevance && item.context_relevance.relevant !== null && (
+                  <div className={`monitor-relevance ${item.context_relevance.relevant ? "relevant" : "not-relevant"}`}>
+                    {item.context_relevance.relevant ? "Relevante" : "No relevante"} según atributos
+                    {item.context_relevance.category_match !== null && ` · categoría ${item.context_relevance.category_match ? "coincide" : "no coincide"}`}
+                    {item.context_relevance.color_similarity !== null && ` · color ${formatPercent(item.context_relevance.color_similarity)}`}
+                  </div>
+                )}
                 {item.rerank_components && (
                   <div className="monitor-components">
                     Componentes: coseno {formatNumber(item.rerank_components.cosine_similarity, 3)},
@@ -180,6 +193,7 @@ export default function MonitoringDashboard() {
                   <strong>{request.input_type || "procesando"} · {request.status_code || "en curso"} · {request.generation_status || "generando"}</strong>
                   <span>{formatNumber(request.duration_ms, 0)} ms · {request.retrieval_count}/{request.reranked_count} prendas</span>
                   <span>{formatNumber(request.input_tokens + request.output_tokens)} tokens · {formatMoney(request.estimated_cost_usd)}</span>
+                  {request.context_precision_available ? <span>Context Precision {formatPercent(request.reranked_context_precision)}</span> : null}
                   <code>{request.request_id.slice(0, 12)}</code>
                 </button>
               ))}
@@ -218,6 +232,19 @@ export default function MonitoringDashboard() {
                   <span>color pixels {formatNumber((detail.query_attributes.color?.color_confidence || 0) * 100, 1)}%</span>
                 </div>
               )}
+              <section className="monitor-context-precision">
+                <strong>Context Precision (AP@k proxy)</strong>
+                {detail.context_precision_available ? (
+                  <>
+                    <span>Antes: {formatPercent(detail.retrieved_context_precision)} · después: {formatPercent(detail.reranked_context_precision)}</span>
+                    <span>{formatNumber(detail.context_precision_relevant_count)} prendas relevantes de {formatNumber(detail.context_precision_k)} · criterio: {(detail.context_precision_criteria || []).join(" + ")}</span>
+                    {(detail.context_precision_criteria || []).includes("color") && (
+                      <span>Umbral de similitud de color: {formatPercent(detail.context_precision_color_threshold)}</span>
+                    )}
+                  </>
+                ) : <span>No calculable: faltan atributos de consulta para evaluar relevancia.</span>}
+                <small>Relevancia proxy basada en categoría confiable y similitud de color; no es una evaluación humana.</small>
+              </section>
               <div className="monitor-stage-grid">
                 <CandidateList title="Antes del reranking" candidates={detail.retrieved || []} stage="retrieved" />
                 <CandidateList title="Después del reranking" candidates={detail.reranked || []} stage="reranked" />

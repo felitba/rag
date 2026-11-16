@@ -57,6 +57,13 @@ class MonitoringService:
                     llm_credential_fingerprint TEXT,
                     retrieval_count INTEGER NOT NULL DEFAULT 0,
                     reranked_count INTEGER NOT NULL DEFAULT 0,
+                    retrieved_context_precision REAL,
+                    reranked_context_precision REAL,
+                    context_precision_k INTEGER,
+                    context_precision_relevant_count INTEGER,
+                    context_precision_criteria_json TEXT,
+                    context_precision_color_threshold REAL,
+                    context_precision_available INTEGER NOT NULL DEFAULT 0,
                     llm_calls INTEGER NOT NULL DEFAULT 0,
                     llm_failures INTEGER NOT NULL DEFAULT 0,
                     input_tokens INTEGER NOT NULL DEFAULT 0,
@@ -85,6 +92,17 @@ class MonitoringService:
                 db.execute("ALTER TABLE requests ADD COLUMN llm_credential_source TEXT")
             if "llm_credential_fingerprint" not in columns:
                 db.execute("ALTER TABLE requests ADD COLUMN llm_credential_fingerprint TEXT")
+            for column, column_type in (
+                ("retrieved_context_precision", "REAL"),
+                ("reranked_context_precision", "REAL"),
+                ("context_precision_k", "INTEGER"),
+                ("context_precision_relevant_count", "INTEGER"),
+                ("context_precision_criteria_json", "TEXT"),
+                ("context_precision_color_threshold", "REAL"),
+                ("context_precision_available", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE requests ADD COLUMN {column} {column_type}")
 
     def begin_request(self, request_id: str, method: str, path: str) -> None:
         with self._connect() as db:
@@ -120,6 +138,28 @@ class MonitoringService:
                 (status, request_id),
             )
 
+    def set_context_precision(self, request_id: str | None, metrics: dict[str, Any]) -> None:
+        if not request_id:
+            return
+        with self._connect() as db:
+            db.execute(
+                """UPDATE requests SET retrieved_context_precision = ?,
+                   reranked_context_precision = ?, context_precision_k = ?,
+                   context_precision_relevant_count = ?, context_precision_criteria_json = ?,
+                   context_precision_color_threshold = ?, context_precision_available = ?
+                   WHERE request_id = ?""",
+                (
+                    metrics.get("retrieved"),
+                    metrics.get("reranked"),
+                    metrics.get("k"),
+                    metrics.get("relevant_count"),
+                    json.dumps(metrics.get("criteria", []), ensure_ascii=False),
+                    metrics.get("color_similarity_threshold"),
+                    int(bool(metrics.get("available"))),
+                    request_id,
+                ),
+            )
+
     def record_candidates(
         self,
         request_id: str | None,
@@ -152,6 +192,7 @@ class MonitoringService:
                 ),
                 "rerank_score": match.get("rerank_score"),
                 "rerank_components": match.get("rerank_components"),
+                "context_relevance": match.get("context_relevance"),
             }
             records.append((request_id, stage, rank, item_id, json.dumps(payload, ensure_ascii=False)))
 
@@ -323,7 +364,9 @@ class MonitoringService:
             ).fetchall()
         result: dict[str, Any] = dict(request)
         raw_attributes = result.pop("query_attributes_json", None)
+        raw_precision_criteria = result.pop("context_precision_criteria_json", None)
         result["query_attributes"] = json.loads(raw_attributes) if raw_attributes else None
+        result["context_precision_criteria"] = json.loads(raw_precision_criteria) if raw_precision_criteria else []
         result["retrieved"] = []
         result["reranked"] = []
         for row in rows:

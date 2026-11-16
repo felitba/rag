@@ -211,7 +211,7 @@ def recommend(request: Request, file: UploadFile | None = None, message: str | N
             upload_path = Path(temporary.name)
 
         try:
-            outfits, explanation, generation_status, retrieved_context, query_attributes = rag.recommend_with_generation(
+            outfits, explanation, generation_status, retrieved_context, query_attributes, context_precision = rag.recommend_with_generation(
                 image_path=upload_path,
                 text=text or None,
                 request_id=request_id,
@@ -220,7 +220,7 @@ def recommend(request: Request, file: UploadFile | None = None, message: str | N
         finally:
             upload_path.unlink()
     elif text:
-        outfits, explanation, generation_status, _, query_attributes = rag.recommend_with_generation(
+        outfits, explanation, generation_status, _, query_attributes, context_precision = rag.recommend_with_generation(
             text=text,
             request_id=request_id,
         )
@@ -245,6 +245,7 @@ def recommend(request: Request, file: UploadFile | None = None, message: str | N
         "recommendations": outfits,
         "explanation": explanation,
         "query_attributes": query_attributes,
+        "context_precision": context_precision,
         "retrieved_metadata_matches": metadata_matches,
         "generation_enabled": bool(CONFIG.get("generator", {}).get("enabled", False)),
         "generation_status": generation_status,
