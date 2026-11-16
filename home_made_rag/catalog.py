@@ -89,12 +89,17 @@ class Catalog:
                 raise FileNotFoundError(f"No existe la imagen de la prenda {item_id}: {path}")
 
     def enrich_missing_colors(self, persist: bool = True) -> int:
-        """Estimate and persist a dominant color for catalog rows without one."""
+        """Estimate and persist missing dominant-color features for catalog rows."""
         enriched = 0
         for item_id, item in self.items.items():
-            if isinstance(item.get("color"), str) and item["color"].strip():
+            if all(item.get(key) is not None for key in ("color", "color_r", "color_g", "color_b")):
                 continue
-            item.update(estimate_garment_color(self.image_path(item_id)))
+            estimated = estimate_garment_color(self.image_path(item_id))
+            for key, value in estimated.items():
+                if key.startswith("color_") and key in {"color_r", "color_g", "color_b"}:
+                    item[key] = value
+                elif not item.get(key):
+                    item[key] = value
             enriched += 1
 
         if enriched and persist:
@@ -122,7 +127,10 @@ class Catalog:
             "image_path": item["image_path"],
             "outfit_ids_json": json.dumps(self.outfits_by_item[item_id])
         }
-        for key in ("color", "color_source", "color_confidence"):
+        for key in (
+            "color", "color_source", "color_confidence",
+            "color_r", "color_g", "color_b",
+        ):
             value = item.get(key)
             if value not in (None, ""):
                 metadata[key] = value

@@ -31,13 +31,19 @@
   },
   "category_classifier": {
     "enabled": true,
-    "model_name": "patrickjohncyh/fashion-clip"
+    "model_name": "patrickjohncyh/fashion-clip",
+    "minimum_margin": 0.015
   },
   "hybrid_reranker": {
     "weights": {
       "cosine_similarity": 0.5,
       "color": 0.25,
       "category": 0.25
+    },
+    "color_similarity": {
+      "delta_e_scale": 40.0,
+      "tone_weight": 0.75,
+      "coverage_weight": 0.25
     }
   },
   "monitoring": {

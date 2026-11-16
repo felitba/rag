@@ -238,6 +238,9 @@ class RAG:
                 "category": metadata.get("category"),
                 "color": metadata.get("color"),
                 "color_confidence": metadata.get("color_confidence"),
+                "color_r": metadata.get("color_r"),
+                "color_g": metadata.get("color_g"),
+                "color_b": metadata.get("color_b"),
                 "outfit_ids": json.loads(metadata["outfit_ids_json"]),
             }
             for item_id, distance, metadata in zip(

@@ -14,7 +14,7 @@ Proyecto de referencia para recibir una foto de una prenda, encontrar prendas vi
 
 La primera etapa recupera hasta `vector_store.top_k` candidatos por similitud
 coseno del embedding CLIP. Después se ordenan con una suma ponderada de
-similitud coseno, coincidencia de color y coincidencia de categoría. Los pesos
+similitud coseno, similitud gradual de color y coincidencia de categoría. Los pesos
 iniciales están en `hybrid_reranker.weights` en `home_made_rag/config.json` y
 son configurables. Si un atributo no está disponible, se omite y se
 renormalizan los pesos restantes.
@@ -26,6 +26,21 @@ estima con el mismo proceso: se reduce la imagen, se intenta excluir el fondo
 uniforme conectado a los bordes, se asigna cada píxel restante a una paleta
 HSV y se selecciona el color más frecuente. `color_confidence` es la fracción
 de píxeles retenidos que cae en esa clase; no es una probabilidad calibrada.
+También se conservan los canales RGB medianos de los píxeles de la clase
+dominante.
+
+El reranker compara esos colores con distancia CIE Lab y transforma la distancia
+en un score continuo de 0 a 1 (`exp(-ΔE / scale)`), en vez de exigir igualdad de
+etiqueta. `hybrid_reranker.color_similarity.delta_e_scale` controla cuánto se
+parecen los tonos distintos; un valor mayor da más crédito a diferencias de
+color. El score de color combina similitud de tono (`tone_weight`, 0.75) y
+similitud de cobertura (`coverage_weight`, 0.25), calculada como
+`1 - |confianza_query - confianza_prenda|`. Esa confianza es el porcentaje de
+píxeles de primer plano que pertenecen al color dominante. Ambos pesos se
+pueden configurar. Los índices Chroma existentes no tienen todavía los canales RGB: el
+reranker les asigna un color representativo de la etiqueta como fallback. Para
+usar los RGB medidos por prenda, corré `python scripts/index_catalog.py` y
+reconstruí el índice.
 
 FashionCLIP se carga de forma diferida cuando llega la primera consulta visual.
 La respuesta incluye las estimaciones de categoría/color, las componentes del
@@ -39,7 +54,14 @@ Con `category_classifier.enabled`, FashionCLIP clasifica la foto de entrada
 entre las categorías existentes en el catálogo. El color de la consulta se
 calcula con el estimador de píxeles descrito arriba. La respuesta de
 `/api/recommend` incluye `query_attributes`; las similitudes del clasificador
-son relativas a las etiquetas del catálogo, no probabilidades calibradas.
+son relativas a las etiquetas del catálogo, no probabilidades calibradas. Para
+reducir errores como clasificar un buzo como `accessories`, se comparan varias
+descripciones de prendas por categoría (incluyendo sweatshirt, sweater, hoodie
+y crewneck para `tops`). Para fotos apaisadas también promedia una vista central
+más cerrada con la imagen completa. Si la diferencia entre las dos mejores
+categorías es menor que `category_classifier.minimum_margin`, se marca como
+dudosa y no influye en el re-ranking. El umbral inicial es configurable y
+conviene calibrarlo con fotos de tu catálogo.
 
 El backend también devuelve `retrieved_metadata_matches`: compara la categoría
 del dataset y el color guardado como metadata de cada garment recuperado.

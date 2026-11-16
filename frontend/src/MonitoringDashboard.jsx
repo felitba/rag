@@ -46,7 +46,9 @@ function CandidateList({ title, candidates, stage }) {
                 {item.rerank_components && (
                   <div className="monitor-components">
                     Componentes: coseno {formatNumber(item.rerank_components.cosine_similarity, 3)},
-                    color {item.rerank_components.color ?? "s/d"},
+                    similitud de color {item.rerank_components.color === null || item.rerank_components.color === undefined ? "s/d" : formatNumber(item.rerank_components.color, 3)},
+                    (tono {item.rerank_components.color_tone_similarity === null || item.rerank_components.color_tone_similarity === undefined ? "s/d" : formatNumber(item.rerank_components.color_tone_similarity, 3)},
+                    similitud de cobertura {item.rerank_components.color_coverage_similarity === null || item.rerank_components.color_coverage_similarity === undefined ? "s/d" : formatNumber(item.rerank_components.color_coverage_similarity, 3)}),
                     categoría {item.rerank_components.category ?? "s/d"}
                   </div>
                 )}
@@ -205,7 +207,13 @@ export default function MonitoringDashboard() {
               {detail.query_attributes && (
                 <div className="monitor-query-attributes">
                   <strong>Consulta estimada:</strong>
-                  <span>categoría {detail.query_attributes.category?.label || "s/d"}</span>
+                  <span>categoría {detail.query_attributes.category?.label || (detail.query_attributes.category?.uncertain ? `dudosa (${detail.query_attributes.category.best_label || "sin candidata"})` : "s/d")}</span>
+                  {detail.query_attributes.category?.alternatives?.length > 0 && (
+                    <span>{detail.query_attributes.category.uncertain ? "candidatas" : "alternativas"} {detail.query_attributes.category.alternatives.map((item) => `${item.label} (${formatNumber(item.similarity, 3)})`).join(" · ")}</span>
+                  )}
+                  {detail.query_attributes.category?.similarity !== undefined && (
+                    <span>similitud {formatNumber(detail.query_attributes.category.similarity, 3)} · margen {formatNumber(detail.query_attributes.category.margin, 3)}</span>
+                  )}
                   <span>color {detail.query_attributes.color?.color || "s/d"}</span>
                   <span>color pixels {formatNumber((detail.query_attributes.color?.color_confidence || 0) * 100, 1)}%</span>
                 </div>
