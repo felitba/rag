@@ -54,7 +54,7 @@
     }
   },
   "context_precision": {
-    "color_similarity_threshold": 0.65
+    "color_similarity_threshold": 0.5
   },
   "monitoring": {
     "enabled": true,

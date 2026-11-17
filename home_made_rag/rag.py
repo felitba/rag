@@ -121,6 +121,11 @@ class RAG:
                 if self.image_preprocessor is not None
                 else image_path
             )
+            if self.monitor and request_id:
+                try:
+                    self.monitor.record_query_images(request_id, image_path, query_image)
+                except Exception:
+                    logger.exception("Could not save query images for monitoring")
             query_embedding = self.embedding.embed_image(query_image)
         elif text:
             query_embedding = self.embedding.embed_text(text)
@@ -249,23 +254,33 @@ class RAG:
         for draft in generated.get("outfits", [])[: self.generator.max_generated_outfits]:
             garment_ids = draft.get("garment_ids", [])
             source_ids = draft.get("source_outfit_ids", [])
-            if (
-                not isinstance(garment_ids, list)
-                or len(garment_ids) < 2
-                or len(set(garment_ids)) != len(garment_ids)
-                or not isinstance(source_ids, list)
-                or len(set(source_ids)) != len(source_ids)
-                or len(source_ids) < 2
-                or any(item_id not in candidate_items for item_id in garment_ids)
-                or any(outfit_id not in candidate_outfits for outfit_id in source_ids)
-            ):
-                logger.warning("Discarding generated outfit with invalid catalog references")
+            rejection_reason = None
+            if not isinstance(garment_ids, list):
+                rejection_reason = "garment_ids_not_list"
+            elif len(garment_ids) < 2:
+                rejection_reason = "fewer_than_two_garments"
+            elif len(set(garment_ids)) != len(garment_ids):
+                rejection_reason = "duplicate_garment_within_look"
+            elif not isinstance(source_ids, list):
+                rejection_reason = "source_outfit_ids_not_list"
+            elif len(source_ids) < 2:
+                rejection_reason = "fewer_than_two_source_outfits"
+            elif len(set(source_ids)) != len(source_ids):
+                rejection_reason = "duplicate_source_outfit_id"
+            elif any(item_id not in candidate_items for item_id in garment_ids):
+                rejection_reason = "garment_id_outside_candidates"
+            elif any(outfit_id not in candidate_outfits for outfit_id in source_ids):
+                rejection_reason = "source_outfit_id_outside_candidates"
+            if rejection_reason:
+                logger.warning("Discarding generated outfit reason=%s", rejection_reason)
                 continue
 
             cited_item_ids = set().union(*(source_item_ids[outfit_id] for outfit_id in source_ids))
             selected = set(garment_ids)
             if not selected.issubset(cited_item_ids):
-                logger.warning("Discarding generated outfit whose garments are outside cited sources")
+                logger.warning(
+                    "Discarding generated outfit reason=garment_not_in_cited_source_outfit"
+                )
                 continue
             contributing_sources = []
             for outfit_id in source_ids:
@@ -288,6 +303,8 @@ class RAG:
                 logger.info("Discarding generated outfit that duplicates a retrieved outfit")
                 continue
 
+            # Garments may recur across different generated looks; only duplicates
+            # within this one look are rejected above.
             resolved.append({
                 "outfit_id": f"generated_{len(resolved) + 1:02d}",
                 "name": draft.get("name") or f"Look {len(resolved) + 1}",

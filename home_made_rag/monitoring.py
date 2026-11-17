@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,8 @@ class MonitoringService:
     def __init__(self, database_path: str | Path, retention_days: int = 30) -> None:
         self.database_path = Path(database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.images_directory = self.database_path.parent / "monitoring_inputs"
+        self.images_directory.mkdir(parents=True, exist_ok=True)
         self.retention_days = max(1, int(retention_days))
         self._initialize()
         self.prune_old_requests()
@@ -127,6 +130,55 @@ class MonitoringService:
                 "UPDATE requests SET input_type = ? WHERE request_id = ?",
                 (input_type, request_id),
             )
+
+    def record_query_images(self, request_id: str | None, original_image, processed_image) -> None:
+        """Persist the uploaded image and the exact foreground-processed image used by RAG."""
+        if not request_id:
+            return
+        if not request_id.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("Invalid request id for monitoring image storage")
+
+        from PIL import Image
+
+        request_directory = self.images_directory / request_id
+        request_directory.mkdir(parents=True, exist_ok=True)
+
+        # Preserve the uploaded bytes and use an extension the browser can render.
+        format_extensions = {
+            "JPEG": ".jpg",
+            "PNG": ".png",
+            "WEBP": ".webp",
+            "GIF": ".gif",
+            "BMP": ".bmp",
+            "TIFF": ".tiff",
+        }
+        with Image.open(original_image) as opened:
+            extension = format_extensions.get(opened.format, ".img")
+        shutil.copyfile(original_image, request_directory / f"input{extension}")
+
+        if isinstance(processed_image, Image.Image):
+            processed_image.convert("RGB").save(
+                request_directory / "processed.jpg", format="JPEG", quality=90, optimize=True
+            )
+        else:
+            with Image.open(processed_image) as opened:
+                opened.convert("RGB").save(
+                    request_directory / "processed.jpg", format="JPEG", quality=90, optimize=True
+                )
+
+    def query_image_path(self, request_id: str, variant: str) -> Path | None:
+        if variant not in {"input", "processed"}:
+            return None
+        if not request_id.replace("-", "").replace("_", "").isalnum():
+            return None
+        request_directory = self.images_directory / request_id
+        if variant == "processed":
+            candidates = [request_directory / "processed.jpg"]
+        else:
+            candidates = [request_directory / f"input{extension}" for extension in (
+                ".jpg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".img"
+            )]
+        return next((path for path in candidates if path.is_file()), None)
 
     def set_query_attributes(self, request_id: str, attributes: dict[str, Any] | None) -> None:
         if not request_id or not attributes:
@@ -239,9 +291,12 @@ class MonitoringService:
                 item = catalog.items.get(garment_id, {})
                 generator_metadata = {
                     key: value
-                    for key in ("category", "title", "description", "color", "style")
+                    for key in ("category", "title", "description", "color", "style", "related")
                     if (value := item.get(key)) not in (None, "")
                 }
+                categories = item.get("catgeories") or item.get("categories")
+                if categories not in (None, ""):
+                    generator_metadata["categories"] = categories
                 generator_metadata["garment_id"] = garment_id
                 monitored_items.append({
                     "garment_id": garment_id,
@@ -449,6 +504,14 @@ class MonitoringService:
         raw_precision_criteria = result.pop("context_precision_criteria_json", None)
         result["query_attributes"] = json.loads(raw_attributes) if raw_attributes else None
         result["context_precision_criteria"] = json.loads(raw_precision_criteria) if raw_precision_criteria else []
+        result["input_image_url"] = (
+            f"/api/monitor/requests/{request_id}/image/input"
+            if self.query_image_path(request_id, "input") else None
+        )
+        result["processed_image_url"] = (
+            f"/api/monitor/requests/{request_id}/image/processed"
+            if self.query_image_path(request_id, "processed") else None
+        )
         result["retrieved"] = []
         result["reranked"] = []
         result["generator_input"] = []
@@ -466,4 +529,12 @@ class MonitoringService:
     def prune_old_requests(self) -> None:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=self.retention_days)).isoformat()
         with self._connect() as db:
+            expired_ids = [
+                row[0] for row in db.execute(
+                    "SELECT request_id FROM requests WHERE started_at < ?", (cutoff,)
+                ).fetchall()
+            ]
             db.execute("DELETE FROM requests WHERE started_at < ?", (cutoff,))
+        for request_id in expired_ids:
+            if request_id.replace("-", "").replace("_", "").isalnum():
+                shutil.rmtree(self.images_directory / request_id, ignore_errors=True)

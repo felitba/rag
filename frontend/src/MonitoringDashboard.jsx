@@ -269,6 +269,25 @@ export default function MonitoringDashboard() {
                   <span>{formatMoney(detail.estimated_cost_usd)} estimado</span>
                 </div>
               </div>
+              {(detail.input_image_url || detail.processed_image_url) && (
+                <section className="monitor-query-images">
+                  <h3>Imagen enviada y resultado de quitar el fondo</h3>
+                  <div className="monitor-query-image-grid">
+                    <figure>
+                      <figcaption>Input del usuario</figcaption>
+                      {detail.input_image_url
+                        ? <img src={`${API_BASE}${detail.input_image_url}`} alt="Imagen original enviada por el usuario" />
+                        : <div className="monitor-query-image-empty">Imagen no disponible</div>}
+                    </figure>
+                    <figure>
+                      <figcaption>Después de quitar el fondo</figcaption>
+                      {detail.processed_image_url
+                        ? <img src={`${API_BASE}${detail.processed_image_url}`} alt="Imagen usada por el retrieval, después del procesamiento de fondo" />
+                        : <div className="monitor-query-image-empty">Imagen procesada no disponible</div>}
+                    </figure>
+                  </div>
+                </section>
+              )}
               {detail.query_attributes && (
                 <div className="monitor-query-attributes">
                   <strong>Consulta estimada:</strong>

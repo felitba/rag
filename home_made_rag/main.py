@@ -10,6 +10,7 @@ from dotenv import load_dotenv, find_dotenv
 
 from fastapi import FastAPI, Request, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from home_made_rag.catalog import Catalog
@@ -236,6 +237,17 @@ def monitor_request_detail(request: Request, request_id: str):
         raise HTTPException(status_code=404, detail="Request not found")
     return result
 
+
+@app.get("/api/monitor/requests/{request_id}/image/{variant}")
+def monitor_request_image(request: Request, request_id: str, variant: str):
+    monitor = getattr(request.app.state, "monitor", None)
+    if monitor is None:
+        raise HTTPException(status_code=503, detail="Monitoring is disabled")
+    image_path = monitor.query_image_path(request_id, variant)
+    if image_path is None:
+        raise HTTPException(status_code=404, detail="Request image not found")
+    return FileResponse(image_path)
+
 # ------------- user prompt receive -------------- #
 @app.post("/api/recommend")
 def recommend(request: Request, file: UploadFile | None = None, message: str | None = Form(None)):
@@ -266,7 +278,7 @@ def recommend(request: Request, file: UploadFile | None = None, message: str | N
         finally:
             upload_path.unlink()
     elif text:
-        outfits, explanation, generation_status, _, query_attributes, context_precision = rag.recommend_with_generation(
+        outfits, explanation, generation_status, retrieved_context, query_attributes, context_precision = rag.recommend_with_generation(
             text=text,
             request_id=request_id,
         )
@@ -281,14 +293,16 @@ def recommend(request: Request, file: UploadFile | None = None, message: str | N
         except Exception:
             logging.getLogger(__name__).exception("Could not record request analysis")
 
-    for outfit in outfits:
-        for item in outfit["items"]:
-            for field in list(item):
-                if field.startswith("_"):
-                    item.pop(field, None)
+    for recommendation_set in (retrieved_context, outfits):
+        for outfit in recommendation_set:
+            for item in outfit["items"]:
+                for field in list(item):
+                    if field.startswith("_"):
+                        item.pop(field, None)
 
     return {
         "recommendations": outfits,
+        "retrieved_outfits": retrieved_context,
         "explanation": explanation,
         "query_attributes": query_attributes,
         "context_precision": context_precision,

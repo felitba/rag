@@ -11,6 +11,46 @@ function money(value) {
   }).format(value);
 }
 
+function OutfitCards({ outfits, emptyMessage }) {
+  if (!outfits.length) return <div className="empty-state">{emptyMessage}</div>;
+
+  return (
+    <div className="outfit-list">
+      {outfits.map((outfit, index) => (
+        <article className="outfit-card" key={outfit.outfit_id}>
+          <div className="outfit-card-heading">
+            <div>
+              <p className="eyebrow">LOOK {String(index + 1).padStart(2, "0")}</p>
+              <h3>{outfit.name || outfit.outfit_id.replaceAll("_", " ")}</h3>
+            </div>
+            <span className="outfit-tag">{outfit.generated ? "Nueva combinación" : "Del catálogo"}</span>
+          </div>
+          {outfit.description && <p className="outfit-description">{outfit.description}</p>}
+          {outfit.explanation && <p className="outfit-explanation">{outfit.explanation}</p>}
+          <div className="garment-grid">
+            {(outfit.items || []).map((item) => (
+              <div className="garment-card" key={item.garment_id}>
+                <div className="garment-image-wrap">
+                  <img
+                    src={`${API_BASE}${item.image_url}`}
+                    alt={`${item.category || "Prenda"}, ${item.color || "color desconocido"}`}
+                    loading="lazy"
+                  />
+                </div>
+                <div className="garment-info">
+                  <span className="garment-category">{item.category || "Prenda"}</span>
+                  <p>{item.color || "Color desconocido"}</p>
+                  <strong>{money(item.price)}</strong>
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -139,57 +179,57 @@ export default function App() {
             <div className="section-heading">
               <div>
                 <p className="eyebrow">PASO 02</p>
-                <h2>Outfits para explorar</h2>
+                <h2>Outfits recuperados y looks generados</h2>
               </div>
-              <span className="result-count">
-                {results.recommendations.length} {results.recommendations.length === 1 ? "look" : "looks"}
-              </span>
             </div>
 
-            {results.explanation && (
-              <div className="explanation">
-                <span className="explanation-mark">✳</span>
-                <p>{results.explanation}</p>
-              </div>
-            )}
+            <div className="results-stages">
+              <section className="results-stage">
+                <div className="results-stage-heading">
+                  <div>
+                    <p className="eyebrow">RETRIEVAL</p>
+                    <h2>Outfits encontrados en el catálogo</h2>
+                    <p>Estos outfits se recuperaron y se usaron como contexto para la generación.</p>
+                  </div>
+                  <span className="result-count">{results.retrieved_outfits?.length || 0} outfits</span>
+                </div>
+                <OutfitCards
+                  outfits={results.retrieved_outfits || []}
+                  emptyMessage="No encontramos outfits disponibles para esta consulta."
+                />
+              </section>
 
-            {results.recommendations.length === 0 ? (
-              <div className="empty-state">No encontramos outfits disponibles para esta foto. Probá con otra toma de la prenda.</div>
-            ) : (
-              <div className="outfit-list">
-                {results.recommendations.map((outfit, index) => (
-                  <article className="outfit-card" key={outfit.outfit_id}>
-                    <div className="outfit-card-heading">
-                      <div>
-                        <p className="eyebrow">LOOK {String(index + 1).padStart(2, "0")}</p>
-                        <h3>{outfit.name || outfit.outfit_id.replaceAll("_", " ")}</h3>
+              <section className="results-stage">
+                <div className="results-stage-heading">
+                  <div>
+                    <p className="eyebrow">GENERATOR</p>
+                    <h2>Looks combinados</h2>
+                    <p>Combinaciones nuevas creadas a partir de prendas de los outfits recuperados.</p>
+                  </div>
+                  <span className={`generation-status ${results.generation_status === "generated" ? "success" : "fallback"}`}>
+                    {results.generation_status === "generated" ? "Generados" : "No hubo generación"}
+                  </span>
+                </div>
+                {results.generation_status === "generated" ? (
+                  <>
+                    {results.explanation && (
+                      <div className="explanation">
+                        <span className="explanation-mark">✳</span>
+                        <p>{results.explanation}</p>
                       </div>
-                      <span className="outfit-tag">{outfit.generated ? "Nueva combinación" : "Del catálogo"}</span>
-                    </div>
-                    {outfit.description && <p className="outfit-description">{outfit.description}</p>}
-                    {outfit.explanation && <p className="outfit-explanation">{outfit.explanation}</p>}
-                    <div className="garment-grid">
-                      {outfit.items.map((item) => (
-                        <div className="garment-card" key={item.garment_id}>
-                          <div className="garment-image-wrap">
-                            <img
-                              src={`${API_BASE}${item.image_url}`}
-                              alt={`${item.category}, ${item.color}`}
-                              loading="lazy"
-                            />
-                          </div>
-                          <div className="garment-info">
-                            <span className="garment-category">{item.category}</span>
-                            <p>{item.color}</p>
-                            <strong>{money(item.price)}</strong>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
+                    )}
+                    <OutfitCards
+                      outfits={results.recommendations || []}
+                      emptyMessage="El Generator no devolvió combinaciones para esta consulta."
+                    />
+                  </>
+                ) : (
+                  <div className="empty-state">
+                    {results.explanation || "El Generator no produjo looks; podés explorar los outfits recuperados arriba."}
+                  </div>
+                )}
+              </section>
+            </div>
           </section>
         )}
       </main>
