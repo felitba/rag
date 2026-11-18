@@ -19,7 +19,6 @@ Orag.log
 # Base vectorial y logs
 /chroma_db/
 /logs/
-/models/type_aware/
 /frontend/package-lock.json
 remember.txt
 
