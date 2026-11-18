@@ -210,7 +210,6 @@ function routeDeviations(detail) {
   const attempts = detail.pipeline_trace?.generation?.attempts || [];
   return [
     config && !config.image_preprocessing && detail.input_type !== "text" && "Quitar fondo estaba desactivado: se usó la foto original.",
-    attributes && !attributes.category?.label && `La categoría de la foto fue dudosa (${attributes.category?.best_label || "sin candidata"}): el reranking usó coseno + color, sin categoría.`,
     config && !config.category_classifier && detail.input_type !== "text" && "El clasificador de categoría estaba desactivado: el reranking no tuvo componente de categoría.",
     rewriting && !rewriting.in_scope && "El texto no era un pedido de ropa: se respondió con el mensaje fijo y no se buscó en el catálogo.",
     rewriting && rewriting.in_scope && rewriting.source !== "rewritten" && "La reescritura falló o estaba apagada: se buscó con el texto original.",
@@ -301,7 +300,7 @@ function PipelineSteps({ detail }) {
       name: "Atributos de la foto",
       what: "FashionCLIP estima la categoría (zero-shot) y un análisis HSV el color dominante. Alimentan el reranking; no filtran.",
       text: attributes
-        ? `categoría ${attributes.category?.label || `dudosa (${attributes.category?.best_label || "s/d"})`} · color ${attributes.color?.color || "s/d"}`
+        ? `categoría ${attributes.category?.label || "s/d"} · color ${attributes.color?.color || "s/d"}`
         : null,
     },
     {
@@ -479,7 +478,7 @@ function RerankExplain({ detail }) {
           <ul className="monitor-explain">
             <li><strong>coseno</strong>: similitud CLIP entre la consulta y la prenda (1 − distancia), entre 0 y 1.</li>
             <li><strong>color</strong>: {config?.color_tone_weight} × tono (distancia CIE Lab ΔE76, escala {config?.color_delta_e_scale}) + {config?.color_coverage_weight} × cobertura (qué parte de la prenda ocupa ese color). {weights.available.color ? "Disponible en esta consulta." : "No disponible: la consulta no tiene color."}</li>
-            <li><strong>categoría</strong>: 1 si la categoría de la prenda coincide con la detectada en la foto, 0 si no. {weights.available.category ? "Disponible en esta consulta." : "No disponible: sin foto o categoría dudosa."}</li>
+            <li><strong>categoría</strong>: 1 si la categoría de la prenda coincide con la detectada en la foto, 0 si no. {weights.available.category ? "Disponible en esta consulta." : "No disponible: sin foto o clasificador desactivado."}</li>
             <li>Un componente que falta se descarta y los pesos se renormalizan. Pesos reales en esta consulta: coseno {formatPercent(weights.effective.cosine_similarity)}, color {formatPercent(weights.effective.color)}, categoría {formatPercent(weights.effective.category)}.</li>
           </ul>
         </>
@@ -1212,18 +1211,18 @@ export default function MonitoringDashboard() {
                     <section className="monitor-pipeline">
                       <h3>Atributos estimados de la foto</h3>
                       <div className="monitor-query-attributes">
-                        <span>categoría <strong>{detail.query_attributes.category?.label || (detail.query_attributes.category?.uncertain ? `dudosa (${detail.query_attributes.category.best_label || "sin candidata"})` : "s/d")}</strong></span>
+                        <span>categoría <strong>{detail.query_attributes.category?.label || "s/d"}</strong></span>
                         {detail.query_attributes.category?.alternatives?.length > 0 && (
-                          <span>{detail.query_attributes.category.uncertain ? "candidatas" : "alternativas"} {detail.query_attributes.category.alternatives.map((item) => `${item.label} (${formatNumber(item.similarity, 3)})`).join(" · ")}</span>
+                          <span>alternativas {detail.query_attributes.category.alternatives.map((item) => `${item.label} (${formatNumber(item.similarity, 3)})`).join(" · ")}</span>
                         )}
                         {detail.query_attributes.category?.similarity !== undefined && (
-                          <span>similitud {formatNumber(detail.query_attributes.category.similarity, 3)} · margen {formatNumber(detail.query_attributes.category.margin, 3)} (mínimo {formatNumber(detail.query_attributes.category.minimum_margin, 3)})</span>
+                          <span>similitud {formatNumber(detail.query_attributes.category.similarity, 3)} · margen {formatNumber(detail.query_attributes.category.margin, 3)}</span>
                         )}
                         <span>color <strong>{detail.query_attributes.color?.color || "s/d"}</strong></span>
                         <span>cobertura del color {formatNumber((detail.query_attributes.color?.color_confidence || 0) * 100, 1)}%</span>
                       </div>
                       <p className="monitor-muted monitor-credential-line">
-                        La categoría es la de mayor similitud FashionCLIP; si el margen sobre la segunda es menor al mínimo se marca dudosa y no se usa. El color es el dominante en HSV sobre los píxeles de la prenda.
+                        La categoría es la de mayor similitud FashionCLIP y siempre se usa en el reranking. El color es el dominante en HSV sobre los píxeles de la prenda.
                       </p>
                     </section>
                   )}

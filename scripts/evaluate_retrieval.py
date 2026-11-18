@@ -62,7 +62,7 @@ class Evaluator:
     def query_attributes(self, query_id):
         item = self.catalog.items[query_id]
         return {
-            "category": {"label": self.category[query_id], "uncertain": False},
+            "category": {"label": self.category[query_id]},
             "color": {key: item.get(key) for key in COLOR_KEYS},
         }
 

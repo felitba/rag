@@ -17,7 +17,7 @@ def evaluate_context_precision(
     color_settings = CONFIG.get("hybrid_reranker", {}).get("color_similarity", {})
     query = query_attributes or {}
     query_category = query.get("category") or {}
-    category_label = query_category.get("label") if not query_category.get("uncertain") else None
+    category_label = query_category.get("label")
     query_color = query.get("color") or {}
     query_color_score = combined_color_similarity(
         query_color,
