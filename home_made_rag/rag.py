@@ -420,6 +420,7 @@ class RAG:
                     "outfit_id": outfit.get("outfit_id"),
                     "status": report.get("status"),
                     "compatibility_score": report.get("compatibility_score"),
+                    "compatibility_similarity": report.get("compatibility_similarity"),
                     "mean_distance": report.get("mean_distance"),
                     "pair_count": report.get("pair_count", 0),
                 }

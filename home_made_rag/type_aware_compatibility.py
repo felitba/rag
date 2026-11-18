@@ -301,10 +301,7 @@ class TypeAwareCompatibilityScorer:
         return "cpu"
 
     def _load_checkpoint(self, torch) -> dict[str, Any]:
-        try:
-            checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=False)
-        except TypeError:  # Older PyTorch versions do not know weights_only.
-            checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=True)
         if isinstance(checkpoint, dict) and isinstance(checkpoint.get("state_dict"), dict):
             return checkpoint["state_dict"]
         if isinstance(checkpoint, dict):
@@ -410,6 +407,9 @@ class TypeAwareCompatibilityScorer:
 
                 distance = self._distance(left_embedding[condition_index], right_embedding[condition_index])
                 pair_score = 1.0 - distance
+                normalized_similarity = self._normalized_similarity(
+                    left_embedding[condition_index], right_embedding[condition_index]
+                )
                 pair_reports.append({
                     "garment_1": left_id,
                     "garment_2": right_id,
@@ -417,6 +417,11 @@ class TypeAwareCompatibilityScorer:
                     "category_2": right_type or right.get("category"),
                     "type_pair": self._type_pair_label(left_type, right_type),
                     "distance": round(distance, 6),
+                    "compatibility_similarity": (
+                        round(normalized_similarity, 6)
+                        if normalized_similarity is not None
+                        else None
+                    ),
                     "compatibility_score": round(pair_score, 6),
                     "used_general_embedding": fallback,
                 })
@@ -431,12 +436,28 @@ class TypeAwareCompatibilityScorer:
             }
 
         distances = [pair["distance"] for pair in pair_reports]
-        weakest = max(pair_reports, key=lambda pair: pair["distance"])
+        similarities = [pair["compatibility_similarity"] for pair in pair_reports]
+        weakest = min(
+            pair_reports,
+            key=lambda pair: (
+                pair["compatibility_similarity"]
+                if pair["compatibility_similarity"] is not None
+                else -pair["distance"]
+            ),
+        )
         mean_distance = sum(distances) / len(distances)
+        mean_similarity = (
+            sum(similarities) / len(similarities)
+            if all(similarity is not None for similarity in similarities)
+            else None
+        )
         return {
             "status": "partial" if missing else "scored",
             "model": self.model_label,
             "compatibility_score": round(1.0 - mean_distance, 6),
+            "compatibility_similarity": (
+                round(mean_similarity, 6) if mean_similarity is not None else None
+            ),
             "mean_distance": round(mean_distance, 6),
             "pair_count": len(pair_reports),
             "fallback_pair_count": fallback_count,
@@ -467,6 +488,16 @@ class TypeAwareCompatibilityScorer:
         if self.metric is not None:
             return float(self.metric((left * right).unsqueeze(0)).squeeze().item())
         return float(torch.nn.functional.pairwise_distance(left.unsqueeze(0), right.unsqueeze(0), p=2).item())
+
+    def _normalized_similarity(self, left, right) -> float | None:
+        """Map normalized Euclidean distance to a 0–1 similarity."""
+        if self.metric is not None:
+            return None
+        torch = self._torch
+        left = torch.nn.functional.normalize(left.unsqueeze(0), p=2, dim=1)
+        right = torch.nn.functional.normalize(right.unsqueeze(0), p=2, dim=1)
+        distance = torch.nn.functional.pairwise_distance(left, right, p=2).item()
+        return max(0.0, min(1.0, 1.0 - float(distance) / 2.0))
 
     def _embeddings_for_items(self, items: list[dict[str, Any]], catalog):
         missing = []

@@ -129,22 +129,56 @@ espacio específico de cada par de categorías y guarda en el monitor, por
 outfit y por par, la distancia media y `compatibility_score = 1 - distancia`.
 El score sirve para ordenar looks; no es una probabilidad calibrada.
 
-El modelo no se incluye en Git porque el checkpoint ocupa espacio y el archivo
-`typespaces.p` debe corresponder al mismo split y orden de categorías que el
-checkpoint. Colocá ambos archivos en:
+Los artefactos no se incluyen en Git. Para descargarlos, verificar sus hashes
+y prepararlos en los paths que usa la aplicación, corré desde la raíz:
 
-```text
-models/type_aware/model_best.pth.tar
-models/type_aware/typespaces.p
+```bash
+python scripts/download_type_aware.py
 ```
 
-La implementación original y las instrucciones del checkpoint están en el
-[repositorio de los autores](https://github.com/mvasil/fashion-compatibility).
-La configuración está en `home_made_rag/config.json`, bajo
-`type_aware_compatibility`. Si faltan los archivos, la aplicación continúa
-funcionando y el monitor muestra el motivo de disponibilidad en vez de fallar.
+El README de los [autores](https://github.com/mvasil/fashion-compatibility)
+todavía publica el checkpoint nondisjoint, pero su enlace de Google Drive
+responde 404. El descargador usa como alternativa un checkpoint público basado
+en el modelo ECCV 2018, entrenado con el split disjoint ([fuente y versión
+fijada](https://github.com/gyao15/fashion/tree/0a4b64b459870a0f117d2bfed054d83f9d780cbc/runs/Type_Specific_Fashion_Compatibility/origin)),
+y el `typespaces.p` de ese split ([archivo y versión fijada](https://huggingface.co/datasets/Stylique/Polyvore/blob/1365152fecb3a8daee9d49c7d9d7f5809cc60b05/disjoint/typespaces.p)).
+El wrapper valida que coincidan los 66 espacios y carga el checkpoint depurado
+con el cargador restringido de PyTorch. La configuración está en
+`home_made_rag/config.json`, bajo `type_aware_compatibility`. Si faltan los
+archivos, la aplicación continúa funcionando y el monitor muestra el motivo de
+disponibilidad en vez de fallar. Este checkpoint no incluye una métrica
+aprendida; el wrapper calcula la distancia euclidiana entre los embeddings.
 Las categorías del catálogo se normalizan a los tipos de Polyvore mediante
 aliases; se pueden agregar aliases propios en `category_aliases`.
+
+Para calcular las métricas de evaluación del paper en el split disjoint, corré:
+
+```bash
+python scripts/evaluate_type_aware_metrics.py
+```
+
+El script calcula Compatibility AUC y FITB accuracy sobre los archivos de test
+del benchmark y transmite las imágenes desde `mvasil/polyvore-outfits` en
+Hugging Face; necesitás acceso aprobado a ese dataset. El resultado se guarda en
+`reports/type_aware_metrics.json`. Con el checkpoint disjoint instalado, la
+corrida actual obtuvo **AUC 0.8425** sobre 30.290 outfits y **FITB accuracy
+56.31 %** sobre 15.145 preguntas. Son resultados de esta variante con distancia
+euclidiana; no son directamente comparables con el 0.88/57.6 % que el README de
+los autores reporta para su checkpoint nondisjoint.
+
+Cada outfit generado también recibe `type_aware_compatibility` en la respuesta
+de `/api/recommend`; la interfaz muestra una similitud normalizada de 0 a 1 y
+la cantidad de pares evaluados. Para cada par se normalizan los embeddings y se
+calcula la distancia euclidiana normalizada `d` (entre 0 y 2), seguida de
+`compatibility_similarity = 1 − d / 2`, que queda entre 0 y 1. El campo
+`compatibility_score` conserva el score original `1 − distancia media`, que
+puede ser negativo si la distancia media supera 1. Para pares puntuados en un
+espacio tipo-aware, el cambio de escala conserva el orden por distancia; cuando
+hay categorías desconocidas que usan el embedding general, el orden frente al
+score original puede cambiar porque ese vector se vuelve a normalizar.
+AUC requiere outfits positivos y
+negativos etiquetados, y FITB requiere preguntas con respuesta correcta, por lo
+que esos dos valores son métricas agregadas del benchmark y no scores por look.
 
 ### Monitor local
 

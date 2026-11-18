@@ -352,7 +352,7 @@ function PipelineSteps({ detail }) {
       name: "Evaluación type-aware",
       what: "El modelo ECCV 2018 compara cada par de prendas en el espacio específico de sus categorías y promedia las distancias. El score mostrado es 1 − distancia media.",
       text: trace?.compatibility
-        ? `${trace.compatibility.model?.available ? "disponible" : "no disponible"} · ${formatNumber((trace.compatibility.stages?.generator_output || []).filter((item) => item.compatibility_score !== null && item.compatibility_score !== undefined).length)} outfits puntuados`
+        ? `${trace.compatibility.model?.available ? "disponible" : "no disponible"} · ${formatNumber((trace.compatibility.stages?.generator_output || []).filter((item) => item.compatibility_similarity !== null && item.compatibility_similarity !== undefined).length)} outfits puntuados`
         : null,
     },
   ];
@@ -789,17 +789,17 @@ function compatibilityReport(outfit) {
 function CompatibilitySummary({ report }) {
   if (!report) return null;
   const status = COMPATIBILITY_STATUS_LABELS[report.status] || report.status || "sin dato";
-  const hasScore = report.compatibility_score !== null && report.compatibility_score !== undefined;
+  const hasScore = report.compatibility_similarity !== null && report.compatibility_similarity !== undefined;
   const weakest = report.weakest_pair;
   return (
     <div className={`monitor-compatibility-summary status-${report.status || "unknown"}`}>
       <div className="monitor-compatibility-heading">
         <strong>Type-aware · {status}</strong>
-        {hasScore && <span>score {formatNumber(report.compatibility_score, 4)}</span>}
+        {hasScore && <span>similitud {formatNumber(report.compatibility_similarity, 4)}</span>}
       </div>
       {hasScore ? (
         <p>
-          distancia media {formatNumber(report.mean_distance, 4)} · {formatNumber(report.pair_count)} pares
+          escala 0–1 · distancia media {formatNumber(report.mean_distance, 4)} · {formatNumber(report.pair_count)} pares
           {report.fallback_pair_count ? ` · ${formatNumber(report.fallback_pair_count)} pares con embedding general` : ""}
           {weakest?.type_pair ? ` · par más débil: ${weakest.type_pair}` : ""}
         </p>
@@ -815,13 +815,14 @@ function CompatibilityPairs({ report }) {
       <summary>Ver score de cada par ({report.pairs.length})</summary>
       <table className="monitor-table">
         <thead>
-          <tr><th>Par</th><th>Tipos</th><th>Score</th><th>Distancia</th><th>Espacio</th></tr>
+          <tr><th>Par</th><th>Tipos</th><th>Similitud 0–1</th><th>Score original</th><th>Distancia</th><th>Espacio</th></tr>
         </thead>
         <tbody>
           {report.pairs.map((pair) => (
             <tr key={`${pair.garment_1}-${pair.garment_2}`}>
               <td>{pair.garment_1} · {pair.garment_2}</td>
               <td>{pair.type_pair}</td>
+              <td>{formatNumber(pair.compatibility_similarity, 4)}</td>
               <td>{formatNumber(pair.compatibility_score, 4)}</td>
               <td>{formatNumber(pair.distance, 4)}</td>
               <td>{pair.used_general_embedding ? "general" : "tipo-aware"}</td>
@@ -841,25 +842,25 @@ function CompatibilityPanel({ detail }) {
     return <p className="monitor-muted">No hay outfits de salida para evaluar.</p>;
   }
   const scored = outfits.filter((outfit) => {
-    const score = compatibilityReport(outfit)?.compatibility_score;
+    const score = compatibilityReport(outfit)?.compatibility_similarity;
     return score !== null && score !== undefined;
   });
   return (
     <section className="monitor-compatibility-panel">
       <div className="monitor-generator-heading">
         <div>
-          <h3>Scores de todos los outfits de salida</h3>
-          <p className="monitor-muted">Score = 1 − distancia media entre todos los pares de prendas. Más alto es mejor; no es una probabilidad.</p>
+          <h3>Compatibilidad de todos los outfits de salida</h3>
+          <p className="monitor-muted">Similitud = 1 − distancia euclidiana media normalizada / 2. Va de 0 a 1; más alto indica embeddings más cercanos. No es una probabilidad.</p>
         </div>
         {model && <span>{model.available ? `${model.model} · ${model.type_spaces || "—"} espacios` : `No disponible: ${model.reason || "faltan assets"}`}</span>}
       </div>
       <div className="monitor-compatibility-kpis">
-        <span><strong>{formatNumber(scored.length)}</strong> outfits con score</span>
+        <span><strong>{formatNumber(scored.length)}</strong> outfits evaluados</span>
         <span><strong>{formatNumber(outfits.length)}</strong> outfits de salida</span>
       </div>
       <table className="monitor-table monitor-compatibility-table">
         <thead>
-          <tr><th>Outfit</th><th>Estado</th><th>Score</th><th>Distancia media</th><th>Pares</th><th>Par más débil</th></tr>
+          <tr><th>Outfit</th><th>Estado</th><th>Similitud 0–1</th><th>Distancia media</th><th>Pares</th><th>Par más débil</th></tr>
         </thead>
         <tbody>
           {outfits.map((outfit, index) => {
@@ -868,7 +869,7 @@ function CompatibilityPanel({ detail }) {
               <tr key={`${outfit.outfit_id || index}-compatibility`}>
                 <td>#{outfit.rank || index + 1} · {outfit.name || outfit.outfit_id || "Outfit"}</td>
                 <td><span className={`monitor-chip status-${report?.status || "pending"}`}>{COMPATIBILITY_STATUS_LABELS[report?.status] || report?.status || "sin evaluar"}</span></td>
-                <td>{report?.compatibility_score === undefined ? "—" : formatNumber(report.compatibility_score, 4)}</td>
+                <td>{report?.compatibility_similarity === undefined || report?.compatibility_similarity === null ? "—" : formatNumber(report.compatibility_similarity, 4)}</td>
                 <td>{report?.mean_distance === undefined ? "—" : formatNumber(report.mean_distance, 4)}</td>
                 <td>{formatNumber(report?.pair_count)}</td>
                 <td>{report?.weakest_pair?.type_pair || report?.reason || "—"}</td>
