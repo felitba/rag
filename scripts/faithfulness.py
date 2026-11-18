@@ -61,6 +61,7 @@ def load_looks(database_path):
         looks.append({
             "request_id": request_id,
             "look": payload["outfit_id"],
+            "name": payload.get("name") or "",
             "text": " ".join(
                 payload.get(field) or "" for field in ("name", "description", "explanation")
             ).strip(),
@@ -128,6 +129,13 @@ def main():
     output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     print({key: value for key, value in report.items() if key != "details"})
     print(f"Saved {output}")
+
+    try:
+        import plot_evaluation
+    except ImportError as error:
+        print(f"Figure skipped: {error}")
+    else:
+        plot_evaluation.plot_faithfulness(report)
 
 
 if __name__ == "__main__":
