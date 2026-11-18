@@ -24,6 +24,174 @@ function formatDate(value) {
   return value ? new Date(value).toLocaleString("es-AR") : "En curso";
 }
 
+function PipelineSteps({ detail }) {
+  const rewriting = detail.query_rewriting;
+  const attributes = detail.query_attributes;
+  const hasPhoto = Boolean(detail.input_image_url || detail.processed_image_url);
+  const steps = [
+    {
+      name: "Entrada",
+      text: `${detail.input_type || "procesando"}${rewriting?.original ? ` · texto: "${rewriting.original}"` : ""}`,
+    },
+    {
+      name: "Preprocesamiento de la foto",
+      text: hasPhoto ? "fondo removido y prenda centrada" : null,
+    },
+    {
+      name: "Atributos de la foto",
+      text: attributes
+        ? `categoría ${attributes.category?.label || "dudosa"} · color ${attributes.color?.color || "s/d"}`
+        : null,
+    },
+    {
+      name: "Query rewriting",
+      text: !rewriting ? null
+        : !rewriting.in_scope ? "fuera de alcance: se respondió con el mensaje fijo"
+        : rewriting.source !== "rewritten" ? "sin reescritura: se usó el texto original"
+        : `modo ${rewriting.mode || "s/d"} · ${rewriting.queries.length} ${rewriting.queries.length === 1 ? "query" : "queries"}`,
+    },
+    {
+      name: "Retrieval",
+      text: detail.retrieval_count
+        ? `${formatNumber(detail.retrieval_count)} prendas candidatas${hasPhoto ? " similares a la foto" : " (una búsqueda por query)"}`
+        : null,
+    },
+    {
+      name: "Reranking híbrido",
+      text: !detail.reranked_count ? null
+        : detail.context_precision_available
+          ? `context precision ${formatPercent(detail.retrieved_context_precision)} → ${formatPercent(detail.reranked_context_precision)}`
+          : "sin atributos de foto: queda el orden por similitud",
+    },
+    {
+      name: "Orden de outfits",
+      text: !(detail.generator_input || []).length ? null
+        : rewriting?.in_scope && hasPhoto
+          ? `foto ${formatNumber((rewriting.photo_weight ?? 0.5) * 100)}% + texto ${formatNumber((rewriting.text_weight ?? 0.5) * 100)}% · ${detail.generator_input.length} outfits`
+          : rewriting?.in_scope
+            ? `por cobertura de las queries · ${detail.generator_input.length} outfits`
+            : `por la prenda más parecida · ${detail.generator_input.length} outfits`,
+    },
+    {
+      name: "Generación",
+      text: detail.generation_status
+        ? `${detail.generation_status} · ${formatNumber(detail.llm_calls)} llamadas al LLM en total · ${formatMoney(detail.estimated_cost_usd)}`
+        : null,
+    },
+  ];
+  return (
+    <section className="monitor-pipeline">
+      <h3>Pasos del pipeline</h3>
+      <ol>
+        {steps.map((step) => (
+          <li key={step.name} className={step.text ? "" : "skipped"}>
+            <strong>{step.name}</strong>
+            <span>{step.text || "no aplica en esta request"}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function RewritingTrace({ rewriting }) {
+  const queries = rewriting.queries || [];
+  const ranking = rewriting.ranking || [];
+  const searched = queries.some((query) => query.match_count !== undefined);
+  return (
+    <section className="monitor-rewriting">
+      <h3>Query rewriting</h3>
+      <div className="monitor-rewriting-facts">
+        <span>texto original: <strong>"{rewriting.original}"</strong></span>
+        {rewriting.mode && (
+          <span>modo: <strong>{rewriting.mode}</strong> ({rewriting.has_photo ? "hay foto: no se agregan prendas" : "solo texto: se descompone en prendas"})</span>
+        )}
+        {rewriting.owned_category && <span>categoría de la foto, excluida de las queries: <strong>{rewriting.owned_category}</strong></span>}
+        {rewriting.model && <span>modelo: {rewriting.model}</span>}
+        {rewriting.input_tokens !== undefined && (
+          <span>{formatNumber(rewriting.input_tokens)} input / {formatNumber(rewriting.output_tokens)} output tokens · {formatMoney(rewriting.estimated_cost_usd)} · {formatNumber(rewriting.duration_ms)} ms</span>
+        )}
+      </div>
+      {!rewriting.in_scope && <p className="monitor-rewriting-note">Fuera de alcance: el modelo marcó que el texto no es un pedido de ropa. No se buscó en el catálogo.</p>}
+      {rewriting.source === "original_text" && (
+        <p className="monitor-rewriting-note">Sin reescritura: se buscó con el texto original.{rewriting.error ? ` Error: ${rewriting.error}` : ""}</p>
+      )}
+      {queries.length > 0 && (
+        <table className="monitor-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Query para CLIP</th><th>Categoría</th>
+              {searched && <><th>Filtro</th><th>Prendas</th><th>Más parecidas (similitud)</th></>}
+            </tr>
+          </thead>
+          <tbody>
+            {queries.map((query, index) => (
+              <tr key={index}>
+                <td>{index + 1}</td>
+                <td>{query.text}</td>
+                <td>{query.category || "cualquiera"}</td>
+                {searched && (
+                  <>
+                    <td>{query.category_filter ? "por categoría" : "sin filtro"}</td>
+                    <td>{formatNumber(query.match_count)}</td>
+                    <td>{(query.top_matches || []).map((match) => `${match.title || match.category} (${formatNumber(match.similarity, 3)})`).join(" · ")}</td>
+                  </>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {queries.length > 0 && !searched && rewriting.has_photo && (
+        <p className="monitor-rewriting-note">Con foto, las queries no buscan prendas nuevas: solo ordenan los outfits que trajo la foto.</p>
+      )}
+      {ranking.length > 0 && (
+        <>
+          <h4>Cómo quedó el orden de los outfits</h4>
+          <table className="monitor-table">
+            <thead>
+              <tr>
+                <th>#</th><th>Outfit</th><th>Score final</th>
+                {rewriting.has_photo && <th>Foto</th>}
+                <th>Texto</th><th>Prenda que mejor responde a cada query (similitud)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ranking.map((outfit, index) => (
+                <tr key={outfit.outfit_id}>
+                  <td>{index + 1}</td>
+                  <td>{outfit.outfit_id}</td>
+                  <td>{formatNumber(outfit.score, 3)}</td>
+                  {rewriting.has_photo && <td>{formatNumber(outfit.photo_score, 3)}</td>}
+                  <td>{formatNumber(outfit.text_score, 3)}</td>
+                  <td>
+                    {(outfit.matches || []).map((match, position) => (
+                      <div key={position}>
+                        {position + 1}. {match.garment_id ? `${match.title || match.category} (${formatNumber(match.best_similarity, 3)})` : "ninguna prenda de esa categoría"}
+                        {match.rule === "promedio de todas las prendas" && ` · promedio del outfit ${formatNumber(match.score, 3)}`}
+                      </div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="monitor-rewriting-note">
+            Texto = promedio sobre las queries. Una query con categoría toma la mejor prenda de esa categoría; una query general promedia todas las prendas del outfit.
+            {rewriting.has_photo && " Score final = foto y texto reescalados a 0–1 y combinados con los pesos configurados."}
+          </p>
+        </>
+      )}
+      {rewriting.system_message && (
+        <details className="monitor-rewriting-prompt">
+          <summary>Ver el prompt enviado al modelo</summary>
+          <pre>{rewriting.system_message}</pre>
+        </details>
+      )}
+    </section>
+  );
+}
+
 function CandidateList({ title, candidates, stage }) {
   return (
     <section className="monitor-stage">
@@ -269,6 +437,7 @@ export default function MonitoringDashboard() {
                   <span>{formatMoney(detail.estimated_cost_usd)} estimado</span>
                 </div>
               </div>
+              <PipelineSteps detail={detail} />
               {(detail.input_image_url || detail.processed_image_url) && (
                 <section className="monitor-query-images">
                   <h3>Imagen enviada y resultado de quitar el fondo</h3>
@@ -288,6 +457,7 @@ export default function MonitoringDashboard() {
                   </div>
                 </section>
               )}
+              {detail.query_rewriting && <RewritingTrace rewriting={detail.query_rewriting} />}
               {detail.query_attributes && (
                 <div className="monitor-query-attributes">
                   <strong>Consulta estimada:</strong>

@@ -22,6 +22,7 @@ from home_made_rag.generator import OutfitGenerator
 from home_made_rag.image_preprocessing import ForegroundPreprocessor
 from home_made_rag.monitoring import MonitoringService
 from home_made_rag.rag import RAG
+from home_made_rag.rewriting import QueryRewriter
 
 
 @asynccontextmanager
@@ -138,6 +139,21 @@ async def lifespan(app: FastAPI):
                 "Configure LLM_API_KEY, HF_TOKEN, or OPENROUTER_API_KEY."
             )
 
+    rewriter = None
+    rewriting_settings = CONFIG.get("query_rewriting", {})
+    rewriting_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if rewriting_settings.get("enabled", False) and rewriting_key:
+        rewriter = QueryRewriter(
+            api_key=rewriting_key,
+            model=os.getenv("OPENAI_MODEL", generator_settings.get("model", "gpt-4.1-mini")),
+            base_url=os.getenv("OPENAI_BASE_URL", generator_settings.get("base_url")),
+            max_queries=rewriting_settings.get("max_queries", 4),
+            mode=rewriting_settings.get("mode", "auto"),
+            input_usd_per_million_tokens=generator_settings.get("input_usd_per_million_tokens", 0.4),
+            output_usd_per_million_tokens=generator_settings.get("output_usd_per_million_tokens", 1.6),
+            monitor=monitor,
+        )
+
     app.state.rag = RAG(
         embedding,
         chroma,
@@ -146,6 +162,7 @@ async def lifespan(app: FastAPI):
         attribute_classifier=attribute_classifier,
         monitor=monitor,
         image_preprocessor=image_preprocessor,
+        rewriter=rewriter
     )
     app.state.monitor = monitor
     logger.info("Ready. Indexed garments: %d", chroma.count())

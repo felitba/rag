@@ -52,6 +52,7 @@ class MonitoringService:
                     path TEXT NOT NULL,
                     input_type TEXT,
                     query_attributes_json TEXT,
+                    query_rewriting_json TEXT,
                     status_code INTEGER,
                     duration_ms REAL,
                     generation_status TEXT,
@@ -97,6 +98,8 @@ class MonitoringService:
             columns = {row[1] for row in db.execute("PRAGMA table_info(requests)").fetchall()}
             if "query_attributes_json" not in columns:
                 db.execute("ALTER TABLE requests ADD COLUMN query_attributes_json TEXT")
+            if "query_rewriting_json" not in columns:
+                db.execute("ALTER TABLE requests ADD COLUMN query_rewriting_json TEXT")
             if "llm_model" not in columns:
                 db.execute("ALTER TABLE requests ADD COLUMN llm_model TEXT")
             if "llm_credential_source" not in columns:
@@ -187,6 +190,15 @@ class MonitoringService:
             db.execute(
                 "UPDATE requests SET query_attributes_json = ? WHERE request_id = ?",
                 (json.dumps(attributes, ensure_ascii=False), request_id),
+            )
+
+    def set_query_rewriting(self, request_id: str, rewriting: dict[str, Any]) -> None:
+        if not request_id:
+            return
+        with self._connect() as db:
+            db.execute(
+                "UPDATE requests SET query_rewriting_json = ? WHERE request_id = ?",
+                (json.dumps(rewriting, ensure_ascii=False), request_id),
             )
 
     def set_generation_status(self, request_id: str, status: str) -> None:
@@ -502,6 +514,8 @@ class MonitoringService:
         result: dict[str, Any] = dict(request)
         raw_attributes = result.pop("query_attributes_json", None)
         raw_precision_criteria = result.pop("context_precision_criteria_json", None)
+        raw_rewriting = result.pop("query_rewriting_json", None)
+        result["query_rewriting"] = json.loads(raw_rewriting) if raw_rewriting else None
         result["query_attributes"] = json.loads(raw_attributes) if raw_attributes else None
         result["context_precision_criteria"] = json.loads(raw_precision_criteria) if raw_precision_criteria else []
         result["input_image_url"] = (

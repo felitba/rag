@@ -35,6 +35,12 @@ class ChromaDB:
     def count(self):
         return self.collection.count()
     
+    def get_embeddings(self, ids):
+        """Return {garment_id: stored embedding} for the given garment ids."""
+        result = self.collection.get(ids=[str(item_id) for item_id in ids], include=["embeddings"])
+        return dict(zip(result["ids"], result["embeddings"]))
+
+    
     def add_batch(self, ids, embeddings, metadatas, documents):
         if not ids:
             return

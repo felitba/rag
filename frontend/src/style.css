@@ -111,6 +111,22 @@ form { display: flex; flex-direction: column; align-items: flex-start; gap: 12px
 .monitor-usage { display: flex; flex-direction: column; gap: 5px; text-align: right; white-space: nowrap; }
 .monitor-query-attributes { display: flex; flex-wrap: wrap; gap: 8px 16px; background: #f1f1ea; padding: 10px; margin-top: 12px; font-size: 11px; }
 .monitor-query-attributes strong { color: var(--accent); }
+.monitor-pipeline, .monitor-rewriting { margin-top: 14px; padding: 14px; border: 1px solid var(--line); background: #fbfaf7; }
+.monitor-pipeline h3, .monitor-rewriting h3 { margin: 0 0 10px; font-size: 14px; }
+.monitor-rewriting h4 { margin: 16px 0 8px; font-size: 12px; }
+.monitor-pipeline ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 11px; }
+.monitor-pipeline li strong { display: inline-block; min-width: 190px; }
+.monitor-pipeline li span { color: var(--muted); }
+.monitor-pipeline li.skipped { opacity: 0.5; }
+.monitor-rewriting-facts { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 11px; color: var(--muted); }
+.monitor-rewriting-facts strong { color: var(--accent); }
+.monitor-rewriting-note { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.monitor-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+.monitor-table th, .monitor-table td { text-align: left; vertical-align: top; padding: 6px 8px; border-top: 1px solid var(--line); }
+.monitor-table th { color: var(--muted); font-weight: 500; font-size: 10px; border-top: 0; }
+.monitor-rewriting-prompt { margin-top: 12px; font-size: 11px; }
+.monitor-rewriting-prompt summary { cursor: pointer; color: var(--accent); }
+.monitor-rewriting-prompt pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f2ec; padding: 10px; font-size: 10px; line-height: 1.6; }
 .monitor-stage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding-top: 14px; }
 .monitor-stage { min-width: 0; }
 .monitor-stage h3 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 16px; margin-bottom: 10px; }

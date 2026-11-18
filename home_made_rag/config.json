@@ -67,6 +67,14 @@
     "exclude_query_item": true,
     "minimum_similarity": null
   },
+    "query_rewriting": {
+    "enabled": true,
+    "max_queries": 4,
+    "mode": "auto",
+    "category_filter": true,
+    "photo_weight": 0.5,
+    "text_weight": 0.5
+  },
   "generator": {
     "enabled": true,
     "model": "gpt-4.1-mini",
