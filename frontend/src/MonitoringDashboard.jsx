@@ -1222,9 +1222,6 @@ export default function MonitoringDashboard() {
                         <span>color <strong>{detail.query_attributes.color?.color || "s/d"}</strong></span>
                         <span>cobertura del color {formatNumber((detail.query_attributes.color?.color_confidence || 0) * 100, 1)}%</span>
                       </div>
-                      <p className="monitor-muted monitor-credential-line">
-                        La categoría es la de mayor similitud FashionCLIP; si el margen sobre la segunda es menor al mínimo se marca dudosa y no se usa. El color es el dominante en HSV sobre los píxeles de la prenda.
-                      </p>
                     </section>
                   )}
                   {detail.query_rewriting

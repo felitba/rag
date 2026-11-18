@@ -1,345 +1,248 @@
-# Fashion RAG — CLIP + ChromaDB + OpenAI
+# Fashion RAG
 
-Proyecto de referencia para recibir una foto de una prenda, encontrar prendas visualmente similares con CLIP, recuperar los outfits prearmados relacionados y generar una explicación en español con un modelo multimodal de OpenAI.
+Aplicación académica de recomendación de outfits basada en recuperación
+aumentada (RAG). El sistema combina un backend FastAPI, una interfaz React y
+un catálogo local derivado de Polyvore.
+
+El asistente acepta una foto, texto o ambos. Recupera prendas similares del
+catálogo, encuentra outfits de referencia y, cuando hay un proveedor LLM
+configurado, puede crear nuevas combinaciones usando únicamente prendas
+recuperadas. Sin credenciales LLM, sigue funcionando como buscador y devuelve
+outfits existentes.
 
 ## Arquitectura
 
-1. **Indexación offline:** CLIP genera un embedding por imagen del catálogo y una rutina visual estima su color dominante. La categoría existente del dataset se conserva. ChromaDB guarda embeddings y los metadatos `category` y `color`.
-2. **Consulta visual:** el usuario sube una imagen. Un segmentador local quita el fondo y centra el objeto sobre un fondo neutro; esa misma imagen procesada se usa para el embedding, la categoría y el color.
-3. **Recuperación de outfits:** Python aplica el re-ranking híbrido a las prendas similares y las traduce a IDs de outfit. `outfits.json` es la fuente canónica para la composición de los looks.
-4. **Generación opcional:** `OutfitGenerator` recibe los outfits candidatos y metadatos permitidos del catálogo, y propone nuevas combinaciones con IDs estructurados.
-5. **Validación y frontend:** `RAG` valida los IDs y resuelve las prendas desde el catálogo original; React muestra las recomendaciones y explicaciones.
+1. `scripts/prepare_polyvore.py` descarga una muestra del dataset
+   `mvasil/polyvore-outfits` y genera el catálogo local con imágenes.
+2. `scripts/index_catalog.py` calcula embeddings CLIP, completa metadatos de
+   color y crea la colección `fashion_items` en ChromaDB.
+3. Para una foto, el backend puede quitar el fondo, calcular su embedding CLIP,
+   clasificar la categoría con FashionCLIP y estimar el color. Para texto,
+   genera consultas de búsqueda y usa embeddings de texto CLIP.
+4. El recuperador busca prendas candidatas y el reranker combina similitud
+   CLIP, categoría y color. Después las relaciona con outfits del catálogo.
+5. El generador LLM, si está disponible, propone combinaciones validadas contra
+   los IDs recuperados. No puede inventar prendas fuera del catálogo.
+6. El modelo type-aware calcula una evaluación de compatibilidad por outfit.
+   Esta métrica se muestra como información adicional; no reordena las
+   recomendaciones.
 
-### Re-ranking híbrido
-
-La primera etapa recupera hasta `vector_store.top_k` candidatos por similitud
-coseno del embedding CLIP. Después se ordenan con una suma ponderada de
-similitud coseno, similitud gradual de color y coincidencia de categoría. Los pesos
-iniciales están en `hybrid_reranker.weights` en `home_made_rag/config.json` y
-son configurables. Si un atributo no está disponible, se omite y se
-renormalizan los pesos restantes.
-
-La categoría de cada producto viene del dataset y se conserva sin inferirla al
-indexar. Para una foto de consulta, FashionCLIP elige la categoría más cercana
-entre las categorías del catálogo. El color del catálogo y de la consulta se
-estima con el mismo proceso: se reduce la imagen, se intenta excluir el fondo
-uniforme conectado a los bordes, se asigna cada píxel restante a una paleta
-HSV y se selecciona el color más frecuente. `color_confidence` es la fracción
-de píxeles retenidos que cae en esa clase; no es una probabilidad calibrada.
-También se conservan los canales RGB medianos de los píxeles de la clase
-dominante.
-
-El reranker compara esos colores con distancia CIE Lab y transforma la distancia
-en un score continuo de 0 a 1 (`exp(-ΔE / scale)`), en vez de exigir igualdad de
-etiqueta. `hybrid_reranker.color_similarity.delta_e_scale` controla cuánto se
-parecen los tonos distintos; un valor mayor da más crédito a diferencias de
-color. El score de color combina similitud de tono (`tone_weight`, 0.75) y
-similitud de cobertura (`coverage_weight`, 0.25), calculada como
-`1 - |confianza_query - confianza_prenda|`. Esa confianza es el porcentaje de
-píxeles de primer plano que pertenecen al color dominante. Ambos pesos se
-pueden configurar. Los índices Chroma existentes no tienen todavía los canales RGB: el
-reranker les asigna un color representativo de la etiqueta como fallback. Para
-usar los RGB medidos por prenda, corré `python scripts/index_catalog.py` y
-reconstruí el índice.
-
-`context_precision` se calcula como AP@k en la lista recuperada y en la lista
-rerankeada. La relevancia es un proxy automático: exige que coincida la
-categoría estimada cuando FashionCLIP la considera confiable y que la similitud
-de color supere `context_precision.color_similarity_threshold` cuando hay color
-disponible. La respuesta de `/api/recommend` incluye el resultado antes y después
-del reranking; el monitor también muestra qué prendas se marcaron relevantes en
-cada etapa. No es ground truth ni una evaluación humana; sirve para observar
-cambios de ranking con el criterio de metadata configurado.
-
-FashionCLIP se carga de forma diferida cuando llega la primera consulta visual.
-La respuesta incluye las estimaciones de categoría/color, las componentes del
-ranking y una comparación orientativa con los metadatos de los garments
-recuperados. Las similitudes del clasificador son relativas a las categorías
-del catálogo.
-
-La eliminación del fondo está configurada en `image_preprocessing` y usa
-`rembg` con el modelo local U²-Net. El modelo se descarga la primera vez que se
-procesa una foto y se reutiliza; la imagen procesada vive en memoria y no se
-guarda. Si la segmentación falla, la request continúa con la imagen original.
-Se puede desactivar con `image_preprocessing.enabled: false`.
-
-### Clasificación visual de la consulta
-
-Con `category_classifier.enabled`, FashionCLIP clasifica la foto de entrada
-entre las categorías existentes en el catálogo. El color de la consulta se
-calcula con el estimador de píxeles descrito arriba. La respuesta de
-`/api/recommend` incluye `query_attributes`; las similitudes del clasificador
-son relativas a las etiquetas del catálogo, no probabilidades calibradas. Para
-reducir errores como clasificar un buzo como `accessories`, se comparan varias
-descripciones de prendas por categoría (incluyendo sweatshirt, sweater, hoodie
-y crewneck para `tops`). Para fotos apaisadas también promedia una vista central
-más cerrada con la imagen completa. Si la diferencia entre las dos mejores
-categorías es menor que `category_classifier.minimum_margin`, se marca como
-dudosa y no influye en el re-ranking. El umbral inicial es configurable y
-conviene calibrarlo con fotos de tu catálogo.
-
-El backend también devuelve `retrieved_metadata_matches`: compara la categoría
-del dataset y el color guardado como metadata de cada garment recuperado.
-Si falta alguno de esos campos, su componente no participa del score.
-Al regenerar el catálogo con `prepare_polyvore.py`, se conservan categorías
-taxonómicas, términos relacionados y `url_name` para facilitar esa comparación.
-
-> El LLM propone combinaciones de IDs, pero no decide qué productos existen ni puede agregar artículos a los resultados de la tienda. El backend solo devuelve IDs pertenecientes a los outfits recuperados y conserva sus datos originales.
-
-### Generador de outfits
-
-Después del retrieval y del reranking, `OutfitGenerator` recibe los outfits
-candidatos y metadatos permitidos del catálogo. Devuelve IDs estructurados;
-`RAG` valida cada ID y resuelve las prendas desde los objetos originales del
-catálogo. La configuración `generator` de `home_made_rag/config.json` controla
-el modelo, la cantidad de outfits de contexto y el máximo de sugerencias.
-
-La credencial del proxy se lee primero desde `LLM_API_KEY` (`OPENAI_API_KEY`
-queda como fallback para uso directo). `OPENAI_MODEL` y `OPENAI_BASE_URL`
-pueden sobrescribir el modelo y el proxy. Por defecto, el cliente usa
-`https://sa-llmproxy.it.itba.edu.ar/`. También se pueden configurar fallbacks
-opcionales. El primero es OpenRouter: agregá `OPENROUTER_API_KEY` a `.env`; usa
-`openrouter/free` por defecto, sobrescribible con `OPENROUTER_MODEL`. Hugging Face
-queda desactivado por defecto porque sus créditos gratuitos son limitados. Si
-querés activarlo después de OpenRouter, configurá `HF_TOKEN`, opcionalmente
-`HF_MODEL` (por defecto `Qwen/Qwen3-32B`) y
-`generator.fallbacks.huggingface.enabled=true`. Se intenta el proveedor principal,
-luego cada fallback habilitado. La respuesta de cada modelo se valida contra el
-esquema y contra los IDs reales del catálogo antes de aceptarla. Si ningún
-proveedor responde con una combinación válida, la API devuelve los outfits
-recuperados.
-
-OpenRouter usa su ruta de modelos gratuitos por defecto; esos modelos tienen
-límites de uso y su disponibilidad puede variar. Hugging Face requiere un token
-propio y sus créditos gratuitos son limitados. Para activar un fallback, agregá
-su clave al `.env` y reiniciá el backend. Las tarifas estimadas de estos fallbacks
-están en cero por defecto; actualizalas en `generator.fallbacks` si cambiás a un
-modelo de pago.
-
-El log registra tokens de entrada/salida y el costo calculado según las tarifas
-por millón de tokens configuradas en `generator`. Actualizá esas tarifas cuando
-cambies de modelo o modalidad de facturación.
-
-### Evaluación de compatibilidad type-aware
-
-Las salidas del generador también se pueden puntuar con el modelo `Learning
-Type-Aware Embeddings for Fashion Compatibility` de ECCV 2018. El evaluador
-recibe las imágenes individuales del catálogo, calcula la distancia en el
-espacio específico de cada par de categorías y guarda en el monitor, por
-outfit y por par, la distancia media y `compatibility_score = 1 - distancia`.
-El score sirve para ordenar looks; no es una probabilidad calibrada.
-
-Los artefactos no se incluyen en Git. Para descargarlos, verificar sus hashes
-y prepararlos en los paths que usa la aplicación, corré desde la raíz:
-
-```bash
-python scripts/download_type_aware.py
-```
-
-El README de los [autores](https://github.com/mvasil/fashion-compatibility)
-todavía publica el checkpoint nondisjoint, pero su enlace de Google Drive
-responde 404. El descargador usa como alternativa un checkpoint público basado
-en el modelo ECCV 2018, entrenado con el split disjoint ([fuente y versión
-fijada](https://github.com/gyao15/fashion/tree/0a4b64b459870a0f117d2bfed054d83f9d780cbc/runs/Type_Specific_Fashion_Compatibility/origin)),
-y el `typespaces.p` de ese split ([archivo y versión fijada](https://huggingface.co/datasets/Stylique/Polyvore/blob/1365152fecb3a8daee9d49c7d9d7f5809cc60b05/disjoint/typespaces.p)).
-El wrapper valida que coincidan los 66 espacios y carga el checkpoint depurado
-con el cargador restringido de PyTorch. La configuración está en
-`home_made_rag/config.json`, bajo `type_aware_compatibility`. Si faltan los
-archivos, la aplicación continúa funcionando y el monitor muestra el motivo de
-disponibilidad en vez de fallar. Este checkpoint no incluye una métrica
-aprendida; el wrapper calcula la distancia euclidiana entre los embeddings.
-Las categorías del catálogo se normalizan a los tipos de Polyvore mediante
-aliases; se pueden agregar aliases propios en `category_aliases`.
-
-Para calcular las métricas de evaluación del paper en el split disjoint, corré:
-
-```bash
-python scripts/evaluate_type_aware_metrics.py
-```
-
-El script calcula Compatibility AUC y FITB accuracy sobre los archivos de test
-del benchmark y transmite las imágenes desde `mvasil/polyvore-outfits` en
-Hugging Face; necesitás acceso aprobado a ese dataset. El resultado se guarda en
-`reports/type_aware_metrics.json`. Con el checkpoint disjoint instalado, la
-corrida actual obtuvo **AUC 0.8425** sobre 30.290 outfits y **FITB accuracy
-56.31 %** sobre 15.145 preguntas. Son resultados de esta variante con distancia
-euclidiana; no son directamente comparables con el 0.88/57.6 % que el README de
-los autores reporta para su checkpoint nondisjoint.
-
-Cada outfit generado también recibe `type_aware_compatibility` en la respuesta
-de `/api/recommend`; la interfaz muestra una similitud normalizada de 0 a 1 y
-la cantidad de pares evaluados. Para cada par se normalizan los embeddings y se
-calcula la distancia euclidiana normalizada `d` (entre 0 y 2), seguida de
-`compatibility_similarity = 1 − d / 2`, que queda entre 0 y 1. El campo
-`compatibility_score` conserva el score original `1 − distancia media`, que
-puede ser negativo si la distancia media supera 1. Para pares puntuados en un
-espacio tipo-aware, el cambio de escala conserva el orden por distancia; cuando
-hay categorías desconocidas que usan el embedding general, el orden frente al
-score original puede cambiar porque ese vector se vuelve a normalizar.
-AUC requiere outfits positivos y
-negativos etiquetados, y FITB requiere preguntas con respuesta correcta, por lo
-que esos dos valores son métricas agregadas del benchmark y no scores por look.
-
-### Monitor local
-
-Con `monitoring.enabled`, cada llamada a `/api/recommend` registra un request ID,
-estado y latencia; también guarda los candidatos y sus metadatos antes y después
-del re-ranking. Si se usa el generador, registra llamadas, tokens y costo
-estimado según las tarifas de `generator`, con un desglose por variable de entorno
-y una huella SHA-256 truncada para distinguir claves rotadas. El historial se
-guarda durante 30 días en `storage/monitoring.sqlite3`; no conserva imágenes ni
-claves API.
-
-Con el frontend local iniciado, abrí `http://localhost:5173/monitor`. También
-están disponibles `/api/monitor/summary`, `/api/monitor/requests` y
-`/api/monitor/requests/{request_id}`. El costo es una estimación de esta
-aplicación; el monitor no consulta saldo, cuota ni uso facturado en la cuenta del
-proveedor.
+`context_precision` es una señal automática basada en categoría y similitud de
+color. No es una evaluación humana ni ground truth.
 
 ## Estructura
 
 ```text
-fashion-rag/
-├── home_made_rag/       # backend FastAPI, RAG, catálogo y modelos
-├── frontend/            # interfaz React + Vite
-├── scripts/             # preparación del catálogo, indexación y evaluación
-├── data/                # catálogo e imágenes locales (generados, ignorados por Git)
-├── chroma_db/           # índice vectorial local (generado, ignorado por Git)
-├── models/type_aware/   # pesos y espacios type-aware
-├── storage/             # uploads y base del monitor
-├── .env.example
-└── requirements.txt
+home_made_rag/       Backend FastAPI y pipeline RAG
+frontend/            Interfaz React + Vite
+scripts/             Preparación, indexación y evaluación
+models/type_aware/   Checkpoint y espacios type-aware
+reports/             Resultados de evaluación
+data/                Catálogo e imágenes locales (regenerable, ignorado por Git)
+chroma_db/           Índice ChromaDB local (regenerable, ignorado por Git)
+storage/             SQLite del monitor e imágenes de consultas
+demos/               Notebooks de demostración
+docs/                Material de referencia y trabajos prácticos
 ```
 
-## 1. Requisitos
+## Requisitos
 
 - Python 3.11 recomendado.
-- Node.js 20 o superior para el frontend.
-- Una API key de OpenAI.
-- CPU o GPU compatible con PyTorch. En CPU funciona, pero indexar muchas imágenes puede tardar más.
+- Node.js 20 o superior.
+- `curl` para descargar los artefactos type-aware si no están presentes.
+- Internet durante la primera instalación, para el dataset y los modelos que
+  todavía no estén en caché.
+- Una credencial LLM solo para reescritura de consultas y generación de nuevos
+  outfits.
 
-## 2. Instalar backend en Windows (PowerShell)
+## Instalación
 
-Desde la carpeta raíz `fashion-rag`:
+Desde la raíz del repositorio:
 
-```powershell
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install --upgrade pip
-```
-
-Instalá PyTorch siguiendo la opción CPU/CUDA apropiada para tu computadora en el selector oficial de PyTorch. Luego:
-
-```powershell
 pip install -r requirements.txt
-Copy-Item .env.example .env
+cp .env.example .env
 ```
 
-Editá `.env` y reemplazá `LLM_API_KEY=replace_me` por tu clave. No la guardes en React ni la subas a Git.
+Editá `.env` y agregá al menos una credencial si querés usar generación:
 
-La instalación de CLIP se hace desde el repositorio oficial para no confundirlo con otros paquetes de Python que también se llaman `clip`.
+```dotenv
+LLM_API_KEY=replace_me
+```
 
-## 3. Preparar el catálogo
+También se admite `OPENAI_API_KEY` para usar un endpoint compatible con OpenAI.
+Los fallbacks se configuran en `home_made_rag/config.json`; actualmente
+OpenRouter está habilitado y Hugging Face está deshabilitado. Las claves son
+opcionales para la recuperación.
 
-Para descargar una muestra de Polyvore y guardar el catálogo en `data/`, ejecutá:
+## Preparar el catálogo
+
+Los archivos de `data/` no forman parte del repositorio y deben generarse antes
+de indexar:
 
 ```bash
 python scripts/prepare_polyvore.py --n 200
 ```
 
-El tamaño de la muestra se puede cambiar con `--n`. La configuración del dataset,
-las rutas locales y el split están en `home_made_rag/config.json`.
+`--n` es la cantidad de outfits fuente que se inspeccionan y vale `200` por
+defecto. El script genera:
 
-## 4. Indexar / reconstruir ChromaDB
+- `data/catalog_items.jsonl`
+- `data/outfits.json`
+- `data/images/`
 
-```powershell
+El checkpoint type-aware y sus espacios ya están en `models/type_aware/`. Si
+faltan, descargalos y verificá sus hashes con:
+
+```bash
+python scripts/download_type_aware.py
+```
+
+Después construí el índice:
+
+```bash
 python scripts/index_catalog.py
 ```
 
-El script valida las referencias y la existencia de todas las imágenes, estima y guarda el color faltante de cada garment, y después **reconstruye la colección completa** con embeddings CLIP y metadata de categoría/color. Si agregás, quitás o modificás fotos, volvé a ejecutarlo.
+El comando valida las imágenes, calcula colores faltantes y **borra y recrea**
+la colección ChromaDB configurada en `home_made_rag/config.json`. Para
+recalcular todos los colores:
 
-ChromaDB persiste los vectores en `chroma_db/`. No subas esa carpeta a Git; podés reconstruirla usando el catálogo.
-
-## 5. Iniciar FastAPI
-
-```powershell
-uvicorn home_made_rag.main:app --reload --port 8000
+```bash
+python scripts/index_catalog.py --recolor
 ```
 
-- Swagger: <http://localhost:8000/docs>
-- Estado: <http://localhost:8000/health>
+Si cambiás `--n`, el catálogo debe prepararse e indexarse nuevamente.
 
-Probá `POST /api/recommend` desde Swagger usando una fotografía JPEG, PNG o WEBP. Si ChromaDB está vacío, ejecutá primero la indexación.
+## Ejecutar la aplicación
 
-## 6. Iniciar React
+En una terminal, desde la raíz:
 
-En una segunda terminal:
+```bash
+source .venv/bin/activate
+uvicorn home_made_rag.main:app --reload --host 127.0.0.1 --port 8000
+```
 
-```powershell
+En otra terminal:
+
+```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Abrí la URL que muestre Vite (por defecto <http://localhost:5173>). El frontend envía la foto a FastAPI y muestra los resultados que devuelve el backend.
+Abrí <http://localhost:5173>. La interfaz tiene estas páginas:
 
-Opcionalmente, creá `frontend/.env` si la API no está en localhost:
+- `/`: asistente de recomendaciones.
+- `/catalogo`: estadísticas, cobertura y límites del catálogo.
+- `/monitor`: requests, tiempos, candidatos y uso estimado del LLM.
 
-```dotenv
-VITE_API_BASE_URL=http://localhost:8000
+El frontend usa `http://localhost:8000` por defecto. Para cambiarlo, copiá
+`frontend/.env.example` como `frontend/.env` y modificá
+`VITE_API_BASE_URL`.
+
+El backend permite CORS desde `http://localhost:5173`. Si cambiás el origen,
+actualizá `allow_origins` en `home_made_rag/main.py`.
+
+## Configuración
+
+La configuración funcional está en
+[home_made_rag/config.json](home_made_rag/config.json):
+
+- `dataset`: dataset, split y paths locales.
+- `embeddings` y `vector_store`: CLIP, dispositivo y ChromaDB.
+- `image_preprocessing`: eliminación de fondo y normalización de imágenes.
+- `category_classifier` y `hybrid_reranker`: categoría, color y pesos del
+  ranking.
+- `retrieval` y `query_rewriting`: filtros, límites y reescritura de texto.
+- `generator`: proveedor, modelos, límites, timeouts y tarifas estimadas.
+- `type_aware_compatibility`: checkpoint, type spaces y dispositivo.
+- `monitoring`: base SQLite y retención de datos.
+
+Variables de entorno disponibles:
+
+| Variable | Uso |
+|---|---|
+| `LLM_API_KEY` | Credencial principal del proxy configurado. |
+| `OPENAI_API_KEY` | Credencial alternativa para un endpoint compatible con OpenAI. |
+| `OPENAI_MODEL` | Sobrescribe el modelo principal. |
+| `OPENAI_BASE_URL` | Sobrescribe el endpoint principal. |
+| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | Fallback OpenRouter, si está habilitado. |
+| `HF_TOKEN`, `HF_MODEL` | Fallback Hugging Face, si está habilitado. |
+
+El backend escribe el log de ejecución en `Orag.log`.
+
+## API
+
+Con el backend activo, la documentación interactiva está en
+<http://localhost:8000/docs>.
+
+| Método y ruta | Función |
+|---|---|
+| `GET /health` | Estado del servicio y cantidad de prendas indexadas. |
+| `GET /api/catalog` | Identidad y estadísticas del catálogo. |
+| `POST /api/recommend` | Recomendación con `file`, `message` o ambos como multipart form. |
+| `GET /api/monitor/summary` | Resumen del monitor. |
+| `GET /api/monitor/requests?limit=50` | Requests recientes. |
+| `GET /api/monitor/requests/{request_id}` | Detalle de un request. |
+| `GET /api/monitor/requests/{request_id}/image/{variant}` | Imagen `input` o `processed` de un request. |
+
+Ejemplo:
+
+```bash
+curl -X POST http://localhost:8000/api/recommend \
+  -F 'file=@/ruta/a/prenda.jpg' \
+  -F 'message=busco un look informal'
 ```
 
-## Variables de entorno
+La respuesta incluye `recommendations`, `retrieved_outfits`,
+`query_attributes`, `context_precision`, `generation_status` y `request_id`.
 
-| Variable | Para qué sirve | Valor inicial |
-|---|---|---|
-| `LLM_API_KEY` | Credencial del proxy LiteLLM de ITBA | Necesaria para el proxy |
-| `OPENAI_API_KEY` | Credencial fallback para uso directo de OpenAI | Opcional; no reemplaza la clave del proxy |
-| `OPENAI_MODEL` | Sobrescribe el modelo del generador | `gpt-4.1-mini` |
-| `OPENAI_BASE_URL` | Sobrescribe la URL base del proxy | `https://sa-llmproxy.it.itba.edu.ar/` |
-| `OPENROUTER_API_KEY` | Clave opcional para el proveedor fallback OpenRouter | Opcional |
-| `OPENROUTER_MODEL` | Sobrescribe el modelo OpenRouter | `openrouter/free` |
-| `HF_TOKEN` | Clave opcional para activar el fallback Hugging Face | Opcional |
-| `HF_MODEL` | Sobrescribe el modelo Hugging Face | `Qwen/Qwen3-32B` |
-| `VITE_API_BASE_URL` | URL del backend para el frontend | `http://localhost:8000` |
+## Compatibilidad type-aware
 
-El modelo CLIP, el directorio de Chroma, el top-k y los límites de resultados se
-configuran en `home_made_rag/config.json`.
+El evaluador implementa *Learning Type-Aware Embeddings for Fashion
+Compatibility* (ECCV 2018). Codifica cada imagen y calcula distancias para los
+pares de prendas en el espacio correspondiente a sus categorías.
 
-Si la API key falta o OpenAI falla, el backend todavía puede devolver outfits recuperados y una explicación de fallback. Instalá las dependencias con `pip install -r requirements.txt`.
+La respuesta contiene:
 
-Ejemplo de respuesta con generación exitosa (los datos de las prendas se
-resuelven siempre desde el catálogo):
+- `compatibility_score`: `1 - distancia media`; puede ser negativo y no es una
+  probabilidad.
+- `compatibility_similarity`: valor normalizado entre 0 y 1 mostrado en la
+  interfaz; tampoco es una probabilidad.
 
-```json
-{
-  "recommendations": [{
-    "outfit_id": "generated_01",
-    "name": "Capas urbanas neutras",
-    "description": "Una combinación relajada para todos los días.",
-    "explanation": "Las prendas crean un conjunto equilibrado.",
-    "style_tags": ["urbano", "casual"],
-    "source_outfits": ["210750761"],
-    "generated": true,
-    "items": [{"garment_id": "154249722", "category": "shoes", "title": "...", "color": null, "style": null, "price": null, "image_url": "/images/..."}]
-  }],
-  "explanation": "Sugerencias nuevas basadas en prendas recuperadas.",
-  "generation_enabled": true,
-  "generation_status": "generated"
-}
+El checkpoint incluido es una variante pública entrenada con el split disjoint
+de Polyvore, con embeddings de 64 dimensiones y 66 espacios. No contiene la
+cabeza de métrica aprendida, por lo que la inferencia usa distancia euclidiana.
+
+Para repetir el benchmark:
+
+```bash
+python scripts/evaluate_type_aware_metrics.py
 ```
 
-## Cómo se calcula el ranking
+El resultado se guarda en `reports/type_aware_metrics.json` y requiere acceso
+al dataset de imágenes Polyvore. La corrida registrada obtuvo AUC **0.8425**
+sobre 30.290 outfits y FITB accuracy **56.31 %** sobre 15.145 preguntas. Esos
+valores corresponden a este checkpoint y a distancia euclidiana; no son
+directamente comparables con checkpoints nondisjoint de los autores.
 
-Cada prenda recuperada en la posición `r` aporta `1 / (r + 1)` puntos a cada outfit al que pertenece. Después se suman esos puntos por outfit y se devuelven los de mayor puntuación. Es un baseline transparente para empezar; **el valor no es una probabilidad de compatibilidad**.
+## Monitor, datos y privacidad
 
-Conviene evaluarlo con fotos de prueba etiquetadas y luego ajustar el ranking, por ejemplo agregando diversidad entre outfits, filtros por categoría, rangos de precio o disponibilidad. Actualmente solo se recomiendan outfits completos en los que todas las prendas estén disponibles.
+El monitor guarda requests y metadatos en
+`storage/monitoring.sqlite3`. Para consultas con foto, también puede conservar
+la imagen original y la procesada en `storage/monitoring_inputs/`, durante
+`monitoring.retention_days` (30 días por defecto). Desactivá `monitoring.enabled`
+en `home_made_rag/config.json` si no querés guardar estos datos.
 
-## Consideraciones antes de producción
+El costo del LLM que muestra el monitor es una estimación basada en las tarifas
+de `generator`; no consulta saldo ni facturación real del proveedor.
 
-- El endpoint comprueba tamaño, formato y dimensiones de la imagen; las imágenes subidas se normalizan y se borran al finalizar la solicitud.
-- El backend sirve las fotos del catálogo desde `data/images/` bajo `/images/...`. No coloques allí archivos privados.
-- La clave de OpenAI se mantiene en el backend.
-- En producción, agregá autenticación/rate limiting, logging estructurado, límites de concurrencia para CLIP, monitoreo de costos de OpenAI y almacenamiento de imágenes adecuado.
-- El ranking visual debe validarse con fotos reales de usuarios. CLIP puede verse influido por fondo, pose, iluminación o por varias prendas visibles en una sola foto.
-- El frontend formatea el precio como ARS solo a modo de demostración. Cambiá `money()` en `frontend/src/App.jsx` a la moneda real de tu tienda.
+No subas al repositorio `.env`, `data/`, `chroma_db/`,
+`storage/monitoring.sqlite3` ni `storage/monitoring_inputs/`. El endpoint
+elimina el archivo temporal de cada upload, pero el monitor puede conservar
+copias según la retención configurada. Las imágenes del catálogo se sirven
+localmente mediante `/images/{item_id}.jpg`.
