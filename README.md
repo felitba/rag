@@ -1,6 +1,6 @@
 # Fashion RAG — CLIP + ChromaDB + OpenAI
 
-Proyecto de referencia para recibir una foto de una prenda, encontrar prendas visualmente similares con CLIP, recuperar los outfits prearmados relacionados y generar una explicación en español con un modelo multimodal de OpenAI.
+Proyecto de referencia para recibir una foto de una prenda, encontrar prendas visualmente similares con CLIP, recuperar los outfits prearmados relacionados y generar looks nuevos en español con un LLM de texto (gpt-4.1-mini vía el proxy LiteLLM de ITBA). También acepta consultas de texto, que se reescriben con el LLM antes de buscar (`query_rewriting` en `home_made_rag/config.json`).
 
 ## Arquitectura
 
@@ -59,8 +59,7 @@ del catálogo.
 
 La eliminación del fondo está configurada en `image_preprocessing` y usa
 `rembg` con el modelo local U²-Net. El modelo se descarga la primera vez que se
-procesa una foto y se reutiliza; la imagen procesada vive en memoria y no se
-guarda. Si la segmentación falla, la request continúa con la imagen original.
+procesa una foto y se reutiliza. Si la segmentación falla, la request continúa con la imagen original.
 Se puede desactivar con `image_preprocessing.enabled: false`.
 
 ### Clasificación visual de la consulta
@@ -73,10 +72,7 @@ son relativas a las etiquetas del catálogo, no probabilidades calibradas. Para
 reducir errores como clasificar un buzo como `accessories`, se comparan varias
 descripciones de prendas por categoría (incluyendo sweatshirt, sweater, hoodie
 y crewneck para `tops`). Para fotos apaisadas también promedia una vista central
-más cerrada con la imagen completa. Si la diferencia entre las dos mejores
-categorías es menor que `category_classifier.minimum_margin`, se marca como
-dudosa y no influye en el re-ranking. El umbral inicial es configurable y
-conviene calibrarlo con fotos de tu catálogo.
+más cerrada con la imagen completa.
 
 El backend también devuelve `retrieved_metadata_matches`: compara la categoría
 del dataset y el color guardado como metadata de cada garment recuperado.
@@ -129,8 +125,9 @@ espacio específico de cada par de categorías y guarda en el monitor, por
 outfit y por par, la distancia media y `compatibility_score = 1 - distancia`.
 El score sirve para ordenar looks; no es una probabilidad calibrada.
 
-Los artefactos no se incluyen en Git. Para descargarlos, verificar sus hashes
-y prepararlos en los paths que usa la aplicación, corré desde la raíz:
+Los artefactos están incluidos en `models/type_aware/`. Para volver a
+descargarlos, verificar sus hashes y prepararlos en los paths que usa la
+aplicación, corré desde la raíz:
 
 ```bash
 python scripts/download_type_aware.py
@@ -187,8 +184,10 @@ estado y latencia; también guarda los candidatos y sus metadatos antes y despu�
 del re-ranking. Si se usa el generador, registra llamadas, tokens y costo
 estimado según las tarifas de `generator`, con un desglose por variable de entorno
 y una huella SHA-256 truncada para distinguir claves rotadas. El historial se
-guarda durante 30 días en `storage/monitoring.sqlite3`; no conserva imágenes ni
-claves API.
+guarda durante 30 días en `storage/monitoring.sqlite3`. El monitor también
+guarda la foto original y la procesada de cada consulta en
+`storage/monitoring_inputs/` (ignorado por Git) durante el mismo período; no
+conserva claves API.
 
 Con el frontend local iniciado, abrí `http://localhost:5173/monitor`. También
 están disponibles `/api/monitor/summary`, `/api/monitor/requests` y
@@ -215,7 +214,7 @@ fashion-rag/
 
 - Python 3.11 recomendado.
 - Node.js 20 o superior para el frontend.
-- Una API key de OpenAI.
+- Una API key del proxy LiteLLM de ITBA (o de OpenRouter como fallback).
 - CPU o GPU compatible con PyTorch. En CPU funciona, pero indexar muchas imágenes puede tardar más.
 
 ## 2. Instalar backend en Windows (PowerShell)
@@ -331,13 +330,11 @@ resuelven siempre desde el catálogo):
 
 ## Cómo se calcula el ranking
 
-Cada prenda recuperada en la posición `r` aporta `1 / (r + 1)` puntos a cada outfit al que pertenece. Después se suman esos puntos por outfit y se devuelven los de mayor puntuación. Es un baseline transparente para empezar; **el valor no es una probabilidad de compatibilidad**.
-
-Conviene evaluarlo con fotos de prueba etiquetadas y luego ajustar el ranking, por ejemplo agregando diversidad entre outfits, filtros por categoría, rangos de precio o disponibilidad. Actualmente solo se recomiendan outfits completos en los que todas las prendas estén disponibles.
+Las prendas recuperadas se ordenan con el re-ranking híbrido y se recorren en ese orden; cada prenda aporta los outfits reales que la contienen. Un outfit toma el puntaje de la primera prenda que lo trajo y se devuelven los primeros en aparecer. **El valor no es una probabilidad de compatibilidad.**
 
 ## Consideraciones antes de producción
 
-- El endpoint comprueba tamaño, formato y dimensiones de la imagen; las imágenes subidas se normalizan y se borran al finalizar la solicitud.
+- El endpoint todavía no valida tamaño, formato ni dimensiones de la imagen. El archivo temporal de la subida se borra al finalizar la solicitud, pero el monitor conserva una copia (ver "Monitor local").
 - El backend sirve las fotos del catálogo desde `data/images/` bajo `/images/...`. No coloques allí archivos privados.
 - La clave de OpenAI se mantiene en el backend.
 - En producción, agregá autenticación/rate limiting, logging estructurado, límites de concurrencia para CLIP, monitoreo de costos de OpenAI y almacenamiento de imágenes adecuado.
