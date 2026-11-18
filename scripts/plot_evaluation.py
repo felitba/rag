@@ -119,7 +119,6 @@ def plot_judged_context_precision(report: dict[str, Any], output: Path | None = 
 def plot_judged_text_rewrite(report: dict[str, Any], output: Path | None = None) -> Path:
     """Compare original text, literal rewrite and decomposed rewrite."""
     summary = report["summary"]
-    rows = report.get("rows", [])
     conditions = ("original_text", "literal", "decompose")
     labels = {
         "original_text": "original text",
@@ -132,7 +131,7 @@ def plot_judged_text_rewrite(report: dict[str, Any], output: Path | None = None)
     headline_k = 10 if 10 in ks else ks[0]
     metric = f"precision_at_{headline_k}"
 
-    fig, (ax_bars, ax_pairs) = plt.subplots(1, 2, figsize=(13.5, 5.8))
+    fig, ax_bars = plt.subplots(figsize=(9, 5.8))
     palette = plt.get_cmap("tab10").colors
     width = 0.25
     x = list(range(len(ks)))
@@ -149,28 +148,16 @@ def plot_judged_text_rewrite(report: dict[str, Any], output: Path | None = None)
     ax_bars.grid(axis="y", alpha=0.25)
     ax_bars.legend(frameon=False, fontsize=9)
 
-    positions = list(range(len(conditions)))
-    for row in rows:
-        ax_pairs.plot(positions, [row[c][metric] for c in conditions],
-                      marker="o", color="#9aa0a6", alpha=0.3, lw=0.8)
-    ax_pairs.plot(positions, [summary[c][metric] for c in conditions],
-                  marker="o", color="#c0392b", lw=2, label="mean")
-    ax_pairs.set_xticks(positions, [labels[c] for c in conditions])
-    ax_pairs.set_ylim(0, 1)
-    ax_pairs.set_ylabel(f"Precision@{headline_k} per query")
-    ax_pairs.set_title(f"Paired per-query precision@{headline_k}")
-    ax_pairs.grid(axis="y", alpha=0.25)
-    ax_pairs.legend(frameon=False, fontsize=9)
     changes = summary.get("change_vs_original", {})
     if changes:
-        text = [
+        text = [f"Change vs original @k={headline_k}"] + [
             f"{labels[c]}: {changes[c][metric]['mean']:+.3f} +/- {changes[c][metric]['se']:.3f} "
             f"({changes[c][metric]['improved']} up / {changes[c][metric]['worsened']} down)"
             for c in ("literal", "decompose") if c in changes
         ]
-        ax_pairs.text(0.98, 0.97, "\n".join(text), transform=ax_pairs.transAxes,
-                      ha="right", va="top", fontsize=8.5,
-                      bbox={"boxstyle": "round,pad=0.4", "fc": "white", "ec": "#cccccc", "alpha": 0.95})
+        ax_bars.text(0.98, 0.97, "\n".join(text), transform=ax_bars.transAxes,
+                     ha="right", va="top", fontsize=8.5,
+                     bbox={"boxstyle": "round,pad=0.4", "fc": "white", "ec": "#cccccc", "alpha": 0.95})
 
     fig.suptitle(f"Judged text-rewrite precision - {summary.get('queries', '?')} requests, "
                  f"top_k={summary.get('top_k', '?')}, model={summary.get('model', '?')}", fontsize=12)

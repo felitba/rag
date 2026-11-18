@@ -4,13 +4,16 @@ The first run asks an LLM for a fixed set of Spanish fashion requests and saves 
 is then retrieved three times: by embedding the original Spanish text, by a literal rewrite,
 and by a decomposed rewrite into English garment queries. A vision LLM sees the original request
 and each returned garment photo, with no catalog metadata, and grades relevance from 0 to 3.
+A grade >= 2 is relevant; the study reports relevant@k and precision@k (k = 5, 10, 30)
+for original text, literal rewrite and decomposed rewrite.
 
 Usage:
     python scripts/judged_text_rewrite.py --queries 30 --device cpu
 
 The query set is reused from logs/judged_text_queries_<N>.json on later runs.  Pass
 --regenerate-queries to replace it deliberately.  Results are written to
-logs/judged_text_rewrite_<N>.json.
+logs/judged_text_rewrite_<N>.json and the comparison figure to
+reports/text_rewrite_precision_<N>.png.
 """
 
 from __future__ import annotations
@@ -19,7 +22,6 @@ import argparse
 import base64
 import io
 import json
-import math
 import os
 import statistics
 import sys
@@ -178,35 +180,21 @@ def generate_or_load_queries(
     return queries, {"path": str(path), **generation}
 
 
-def average_precision(labels: list[bool]) -> float:
-    hits = 0
-    total = 0.0
-    for rank, relevant in enumerate(labels, start=1):
-        if relevant:
-            hits += 1
-            total += hits / rank
-    return total / hits if hits else 0.0
+K_VALUES = (5, 10, 30)
 
 
-def ndcg(grades: list[int], k: int = 10) -> float:
-    def dcg(values: list[int]) -> float:
-        return sum((2**grade - 1) / math.log2(rank + 2) for rank, grade in enumerate(values[:k]))
-
-    ideal = dcg(sorted(grades, reverse=True))
-    return dcg(grades) / ideal if ideal else 0.0
-
-
-def metrics(ids: list[str], grades: dict[str, int]) -> dict[str, float | int]:
+def precision_metrics(
+    ids: list[str],
+    grades: dict[str, int],
+    k_values: tuple[int, ...],
+) -> dict[str, float | int]:
     values = [grades[item_id] for item_id in ids]
-    good = [grade >= 2 for grade in values]
-    return {
-        "relevant_count": sum(good),
-        "relevant_rate": round(sum(good) / len(values), 6) if values else 0.0,
-        "ap_relevant": round(average_precision(good), 6),
-        "ndcg10": round(ndcg(values), 6),
-        "mean_grade_top5": round(sum(values[:5]) / min(5, len(values)), 6) if values else 0.0,
-        "mean_grade_topk": round(sum(values) / len(values), 6) if values else 0.0,
-    }
+    result: dict[str, float | int] = {}
+    for k in k_values:
+        relevant = sum(grade >= 2 for grade in values[:k])
+        result[f"relevant_at_{k}"] = relevant
+        result[f"precision_at_{k}"] = round(relevant / k, 6)
+    return result
 
 
 def paired_change(
@@ -276,6 +264,10 @@ def main() -> None:
     args = parse_args()
     if args.queries < 1 or args.top_k < 1 or args.workers < 1:
         raise ValueError("--queries, --top-k, and --workers must be positive")
+    k_values = tuple(k for k in K_VALUES if k <= args.top_k)
+    if not k_values:
+        raise ValueError("--top-k must be at least 5 to report precision@5")
+    headline_k = 10 if 10 in k_values else k_values[0]
 
     load_dotenv(REPO / ".env")
     generator = CONFIG["generator"]
@@ -345,38 +337,30 @@ def main() -> None:
             "original_text": {
                 "queries": original_queries,
                 "candidate_ids": [match["item_id"] for match in original],
-                **metrics([match["item_id"] for match in original], grades),
+                **precision_metrics([match["item_id"] for match in original], grades, k_values),
             },
             "literal": {
                 "queries": literal_queries,
                 "candidate_ids": [match["item_id"] for match in literal],
-                **metrics([match["item_id"] for match in literal], grades),
+                **precision_metrics([match["item_id"] for match in literal], grades, k_values),
             },
             "decompose": {
                 "queries": decompose_queries,
                 "candidate_ids": [match["item_id"] for match in decompose],
-                **metrics([match["item_id"] for match in decompose], grades),
+                **precision_metrics([match["item_id"] for match in decompose], grades, k_values),
             },
             "rewrite_details": {"literal": literal_details, "decompose": decompose_details},
-            "grades": grades,
         }
         rows.append(row)
         print(
-            f"[{index}/{len(text_queries)}] {text!r} | good "
-            f"{row['original_text']['relevant_count']}/{row['literal']['relevant_count']}/{row['decompose']['relevant_count']} | "
-            f"AP {row['original_text']['ap_relevant']:.3f}/{row['literal']['ap_relevant']:.3f}/{row['decompose']['ap_relevant']:.3f} | "
-            f"NDCG@10 {row['original_text']['ndcg10']:.3f}/{row['literal']['ndcg10']:.3f}/{row['decompose']['ndcg10']:.3f}",
+            f"[{index}/{len(text_queries)}] {text!r} | P@{headline_k} "
+            f"{row['original_text'][f'precision_at_{headline_k}']:.3f}/"
+            f"{row['literal'][f'precision_at_{headline_k}']:.3f}/"
+            f"{row['decompose'][f'precision_at_{headline_k}']:.3f}",
             flush=True,
         )
 
-    metric_names = (
-        "relevant_count",
-        "relevant_rate",
-        "ap_relevant",
-        "ndcg10",
-        "mean_grade_top5",
-        "mean_grade_topk",
-    )
+    metric_names = [f"{prefix}_at_{k}" for k in k_values for prefix in ("relevant", "precision")]
     summary = {
         condition: {
             metric: round(statistics.mean(row[condition][metric] for row in rows), 6)
@@ -407,6 +391,8 @@ def main() -> None:
     summary.update({
         "queries": len(rows),
         "top_k": args.top_k,
+        "k_values": list(k_values),
+        "relevance_threshold": 2,
         "device": args.device,
         "rewrite_modes": ["literal", "decompose"],
         "model": model,
@@ -426,6 +412,13 @@ def main() -> None:
     output_path.write_text(json.dumps({"summary": summary, "rows": rows}, indent=2, ensure_ascii=False), encoding="utf-8")
     print("SUMMARY " + json.dumps(summary, ensure_ascii=False))
     print(f"Saved {output_path}")
+
+    try:
+        from plot_evaluation import plot_judged_text_rewrite
+    except ImportError as error:
+        print(f"Figure skipped: {error}")
+    else:
+        plot_judged_text_rewrite({"summary": summary, "rows": rows})
 
 
 if __name__ == "__main__":
