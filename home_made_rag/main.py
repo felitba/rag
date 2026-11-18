@@ -24,6 +24,7 @@ from home_made_rag.image_preprocessing import ForegroundPreprocessor
 from home_made_rag.monitoring import MonitoringService
 from home_made_rag.rag import RAG
 from home_made_rag.rewriting import QueryRewriter
+from home_made_rag.type_aware_compatibility import TypeAwareCompatibilityScorer
 
 
 @asynccontextmanager
@@ -143,6 +144,24 @@ async def lifespan(app: FastAPI):
                 "Configure LLM_API_KEY, HF_TOKEN, or OPENROUTER_API_KEY."
             )
 
+    compatibility_settings = CONFIG.get("type_aware_compatibility", {})
+    compatibility_scorer = TypeAwareCompatibilityScorer(
+        enabled=compatibility_settings.get("enabled", False),
+        checkpoint_path=project_dir / compatibility_settings.get(
+            "checkpoint_path", "models/type_aware/model_best.pth.tar"
+        ),
+        typespaces_path=project_dir / compatibility_settings.get(
+            "typespaces_path", "models/type_aware/typespaces.p"
+        ),
+        device=compatibility_settings.get("device", "auto"),
+        category_aliases=compatibility_settings.get("category_aliases", {}),
+        max_batch_size=compatibility_settings.get("max_batch_size", 16),
+    )
+    if compatibility_scorer.available:
+        logger.info("Type-aware outfit evaluation is enabled")
+    else:
+        logger.warning("Type-aware outfit evaluation is unavailable: %s", compatibility_scorer.reason)
+
     rewriter = None
     rewriting_settings = CONFIG.get("query_rewriting", {})
     rewriting_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -166,7 +185,8 @@ async def lifespan(app: FastAPI):
         attribute_classifier=attribute_classifier,
         monitor=monitor,
         image_preprocessor=image_preprocessor,
-        rewriter=rewriter
+        rewriter=rewriter,
+        compatibility_scorer=compatibility_scorer,
     )
     app.state.monitor = monitor
     try:

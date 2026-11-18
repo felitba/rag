@@ -120,6 +120,14 @@
     "cached_input_usd_per_million_tokens": 0.1,
     "output_usd_per_million_tokens": 1.6
   },
+  "type_aware_compatibility": {
+    "enabled": true,
+    "checkpoint_path": "models/type_aware/model_best.pth.tar",
+    "typespaces_path": "models/type_aware/typespaces.p",
+    "device": "auto",
+    "max_batch_size": 16,
+    "category_aliases": {}
+  },
   "api": {
     "host": "127.0.0.1",
     "port": 8000,

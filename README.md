@@ -120,6 +120,32 @@ El log registra tokens de entrada/salida y el costo calculado según las tarifas
 por millón de tokens configuradas en `generator`. Actualizá esas tarifas cuando
 cambies de modelo o modalidad de facturación.
 
+### Evaluación de compatibilidad type-aware
+
+Las salidas del generador también se pueden puntuar con el modelo `Learning
+Type-Aware Embeddings for Fashion Compatibility` de ECCV 2018. El evaluador
+recibe las imágenes individuales del catálogo, calcula la distancia en el
+espacio específico de cada par de categorías y guarda en el monitor, por
+outfit y por par, la distancia media y `compatibility_score = 1 - distancia`.
+El score sirve para ordenar looks; no es una probabilidad calibrada.
+
+El modelo no se incluye en Git porque el checkpoint ocupa espacio y el archivo
+`typespaces.p` debe corresponder al mismo split y orden de categorías que el
+checkpoint. Colocá ambos archivos en:
+
+```text
+models/type_aware/model_best.pth.tar
+models/type_aware/typespaces.p
+```
+
+La implementación original y las instrucciones del checkpoint están en el
+[repositorio de los autores](https://github.com/mvasil/fashion-compatibility).
+La configuración está en `home_made_rag/config.json`, bajo
+`type_aware_compatibility`. Si faltan los archivos, la aplicación continúa
+funcionando y el monitor muestra el motivo de disponibilidad en vez de fallar.
+Las categorías del catálogo se normalizan a los tipos de Polyvore mediante
+aliases; se pueden agregar aliases propios en `category_aliases`.
+
 ### Monitor local
 
 Con `monitoring.enabled`, cada llamada a `/api/recommend` registra un request ID,

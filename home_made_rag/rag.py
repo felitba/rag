@@ -51,6 +51,7 @@ class RAG:
         monitor=None,
         image_preprocessor=None,
         rewriter=None,
+        compatibility_scorer=None,
     ):
         self.embedding = embedding
         self.chroma = chroma
@@ -61,6 +62,7 @@ class RAG:
         self.monitor = monitor
         self.image_preprocessor = image_preprocessor
         self.rewriter = rewriter
+        self.compatibility_scorer = compatibility_scorer
         self.categories = sorted({item["category"] for item in catalog.items.values()})
 
 
@@ -280,6 +282,11 @@ class RAG:
             "top_n_outfits": generator.get("top_n_outfits"),
             "max_generated_outfits": generator.get("max_generated_outfits"),
             "generator_uses_images": bool(generator.get("use_images", False)),
+            "type_aware_compatibility": (
+                self.compatibility_scorer.status()
+                if self.compatibility_scorer is not None
+                else {"enabled": False, "available": False, "reason": "not configured"}
+            ),
         }
 
     @staticmethod
@@ -339,6 +346,7 @@ class RAG:
             )
         except OutOfScopeRequest:
             return [], OUT_OF_SCOPE_MESSAGE, "out_of_scope", [], None, context_precision
+        self._evaluate_outfits(retrieved, trace, timings, "generator_input")
         self._record_generator_outfits(request_id, "generator_input", retrieved)
 
         if not enabled:
@@ -376,11 +384,13 @@ class RAG:
                     attempt_log=attempts,
                 )
             recommendations = resolved_recommendations
+            self._evaluate_outfits(recommendations, trace, timings, "generator_output")
             self._record_generator_outfits(request_id, "generator_output", recommendations)
             explanation = generated.get("explanation") or "Sugerencias nuevas basadas en prendas de los outfits recuperados."
             return recommendations, explanation, "generated", retrieved, query_attributes, context_precision
         except Exception:
             logger.exception("Outfit generation failed; returning retrieved recommendations")
+            self._evaluate_outfits(retrieved, trace, timings, "generator_output")
             self._record_generator_outfits(request_id, "generator_output", retrieved)
             return retrieved, "La generación no estuvo disponible; mostramos los outfits recuperados del catálogo.", "fallback", retrieved, query_attributes, context_precision
 
@@ -391,6 +401,44 @@ class RAG:
             self.monitor.record_generator_outfits(request_id, stage, outfits, self.catalog)
         except Exception:
             logger.exception("Could not record %s outfits for monitoring", stage)
+
+    def _evaluate_outfits(self, outfits, trace, timings, stage):
+        """Attach type-aware scores to each outfit and persist a compact trace."""
+        if self.compatibility_scorer is None:
+            return
+        try:
+            with timed(timings, "compatibility"):
+                reports = self.compatibility_scorer.evaluate_outfits(outfits, self.catalog)
+            for outfit, report in zip(outfits, reports):
+                outfit["type_aware_compatibility"] = report
+            compatibility_trace = trace.setdefault("compatibility", {
+                "model": self.compatibility_scorer.status(),
+                "stages": {},
+            })
+            compatibility_trace["stages"][stage] = [
+                {
+                    "outfit_id": outfit.get("outfit_id"),
+                    "status": report.get("status"),
+                    "compatibility_score": report.get("compatibility_score"),
+                    "mean_distance": report.get("mean_distance"),
+                    "pair_count": report.get("pair_count", 0),
+                }
+                for outfit, report in zip(outfits, reports)
+            ]
+        except Exception as error:
+            logger.exception("Could not evaluate outfits with type-aware compatibility")
+            report = {
+                "status": "error",
+                "model": getattr(self.compatibility_scorer, "model_label", "Type-aware embeddings"),
+                "reason": f"{type(error).__name__}: {error}",
+                "pair_count": 0,
+            }
+            for outfit in outfits:
+                outfit["type_aware_compatibility"] = report.copy()
+            trace.setdefault("compatibility", {}).update({
+                "model": self.compatibility_scorer.status(),
+                "error": report["reason"],
+            })
 
     def _resolve_generated(self, generated, candidates, report=None):
         candidate_outfits = {outfit["outfit_id"]: outfit for outfit in candidates}
