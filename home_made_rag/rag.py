@@ -297,8 +297,8 @@ class RAG:
                 rejection_reason = "duplicate_garment_within_look"
             elif not isinstance(source_ids, list):
                 rejection_reason = "source_outfit_ids_not_list"
-            elif len(source_ids) < 2:
-                rejection_reason = "fewer_than_two_source_outfits"
+            elif not source_ids:
+                rejection_reason = "missing_source_outfits"
             elif len(set(source_ids)) != len(source_ids):
                 rejection_reason = "duplicate_source_outfit_id"
             elif any(item_id not in candidate_items for item_id in garment_ids):
@@ -311,9 +311,20 @@ class RAG:
 
             cited_item_ids = set().union(*(source_item_ids[outfit_id] for outfit_id in source_ids))
             selected = set(garment_ids)
+            matching_existing_outfits = [
+                outfit_id
+                for outfit_id, items in source_item_ids.items()
+                if selected == items
+            ]
+            is_existing_outfit = bool(matching_existing_outfits)
             if not selected.issubset(cited_item_ids):
                 logger.warning(
                     "Discarding generated outfit reason=garment_not_in_cited_source_outfit"
+                )
+                continue
+            if not is_existing_outfit and len(set(source_ids)) < 2:
+                logger.warning(
+                    "Discarding generated outfit reason=fewer_than_two_source_outfits_for_new_combination"
                 )
                 continue
             contributing_sources = []
@@ -328,14 +339,22 @@ class RAG:
                 )
                 if exclusive_selected_items:
                     contributing_sources.append(outfit_id)
-            if len(contributing_sources) < 2:
+            if not contributing_sources:
+                logger.warning(
+                    "Discarding generated outfit reason=no_contributing_source_outfits"
+                )
+                continue
+            if not is_existing_outfit and len(contributing_sources) < 2:
                 logger.warning(
                     "Discarding generated outfit that does not combine garments from at least two source outfits"
                 )
                 continue
-            if any(selected == source_item_ids[outfit_id] for outfit_id in candidate_outfits):
-                logger.info("Discarding generated outfit that duplicates a retrieved outfit")
-                continue
+            if is_existing_outfit:
+                resolved_sources = [oid for oid in matching_existing_outfits if oid in source_ids]
+                if not resolved_sources:
+                    resolved_sources = matching_existing_outfits[:1]
+            else:
+                resolved_sources = contributing_sources
 
             # Garments may recur across different generated looks; only duplicates
             # within this one look are rejected above.
@@ -345,7 +364,7 @@ class RAG:
                 "description": draft.get("description") or "",
                 "explanation": draft.get("explanation") or "",
                 "style_tags": draft.get("style_tags", []),
-                "source_outfits": contributing_sources,
+                "source_outfits": resolved_sources,
                 "generated": True,
                 "score": None,
                 "matched_garment_ids": [],
