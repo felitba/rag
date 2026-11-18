@@ -9,10 +9,14 @@ preprocessing used to create the CLIP vector.
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import json
+import os
 import random
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
@@ -264,6 +268,92 @@ def mean_ci(values: list[float], seed: int = 42, rounds: int = 10000) -> tuple[f
     return float(sample.mean()), float(np.quantile(boot, .025)), float(np.quantile(boot, .975))
 
 
+def make_judge_client():
+    """Create the vision judge lazily, so proxy-only runs need no API credentials."""
+    from dotenv import load_dotenv
+    from openai import OpenAI
+    from pydantic import BaseModel, Field
+
+    load_dotenv(ROOT / ".env")
+    settings = CONFIG["generator"]
+    api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("--judge requires LLM_API_KEY or OPENAI_API_KEY in .env or the environment")
+    model = os.getenv("OPENAI_MODEL", settings["model"])
+    client = OpenAI(
+        api_key=api_key,
+        base_url=os.getenv("OPENAI_BASE_URL", settings["base_url"]),
+        timeout=60,
+        max_retries=3,
+    )
+
+    class Grade(BaseModel):
+        grade: int = Field(ge=0, le=3)
+
+    return client, model, Grade
+
+
+JUDGE_PROMPT = (
+    "You compare two fashion product photos: the QUERY garment and one CANDIDATE. Grade how good "
+    "the candidate is as a result for a shopper searching with the query photo:\n"
+    "0 = a different type of garment or accessory (a skirt for a jacket, a bag for a shoe).\n"
+    "1 = the same type of garment, but a clearly different look (different colour family and style).\n"
+    "2 = the same type and a similar look: shares the colour family, or the material, cut or style.\n"
+    "3 = nearly the same garment.\n"
+    "Judge only what is visible. Return the grade."
+)
+
+
+def _image_data_url(path: Path, side: int = 384) -> str:
+    with Image.open(path) as opened:
+        image = opened.convert("RGB")
+        image.thumbnail((side, side))
+        buffer = io.BytesIO()
+        image.save(buffer, "JPEG", quality=80)
+    return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
+
+
+def judge_pair(query_path: Path, candidate_path: Path, client, model: str, grade_schema):
+    response = client.chat.completions.parse(
+        model=model,
+        temperature=0,
+        response_format=grade_schema,
+        max_completion_tokens=20,
+        messages=[
+            {"role": "system", "content": JUDGE_PROMPT},
+            {"role": "user", "content": [
+                {"type": "text", "text": "QUERY"},
+                {"type": "image_url", "image_url": {"url": _image_data_url(query_path)}},
+                {"type": "text", "text": "CANDIDATE"},
+                {"type": "image_url", "image_url": {"url": _image_data_url(candidate_path)}},
+            ]},
+        ],
+    )
+    return (
+        response.choices[0].message.parsed.grade,
+        response.usage.prompt_tokens,
+        response.usage.completion_tokens,
+    )
+
+
+def judged_ranking_metrics(item_ids: list[str], grades_by_id: dict[str, int], top_k: int) -> dict:
+    grades = [grades_by_id[item_id] for item_id in item_ids]
+    relevant = [grade >= 2 for grade in grades]
+    relevant_count = sum(relevant[:top_k])
+    hits = 0
+    precision_sum = 0.0
+    for rank, is_relevant in enumerate(relevant[:top_k], start=1):
+        if is_relevant:
+            hits += 1
+            precision_sum += hits / rank
+    ap = precision_sum / relevant_count if relevant_count else 0.0
+    result = {"judge_ap_at_30": round(ap, 6), "judge_relevant_at_30": relevant_count}
+    for k in (5, 10, 30):
+        result[f"judge_precision_at_{k}"] = round(sum(relevant[:k]) / k, 6)
+        result[f"judge_relevant_at_{k}"] = sum(relevant[:k])
+    return result
+
+
 def evaluate(
     count: int,
     top_k: int,
@@ -271,6 +361,7 @@ def evaluate(
     save_baseline: bool = True,
     manifest_path: Path = MANIFEST,
     seed: int = 42,
+    use_judge: bool = False,
 ) -> Path:
     if not manifest_path.exists():
         raise FileNotFoundError(f"No query manifest at {manifest_path}; run with --download first")
@@ -287,6 +378,8 @@ def evaluate(
         padding_ratio=settings["padding_ratio"],
     )
     reranker = HybridGarmentReranker()
+    judge_setup = make_judge_client() if use_judge else None
+    judge_tokens = [0, 0]
     rows = []
     for index, query in enumerate(queries, 1):
         path = OUT / query["filename"]
@@ -306,7 +399,7 @@ def evaluate(
         score_after = evaluate_context_precision(after, attributes, catalog)
         score_reranked_before = evaluate_context_precision(reranked_before, attributes, catalog)
         score_reranked_after = evaluate_context_precision(reranked_after, attributes, catalog)
-        rows.append({
+        row = {
             **query,
             "query_color": attributes["color"],
             "context_precision_without_background_removal": score_before["score"],
@@ -320,10 +413,47 @@ def evaluate(
             "retrieved_with": [m["item_id"] for m in after],
             "reranked_without": [m["item_id"] for m in reranked_before],
             "reranked_with": [m["item_id"] for m in reranked_after],
-        })
+        }
+        if judge_setup:
+            client, judge_model, grade_schema = judge_setup
+            judge_candidate_ids = list(dict.fromkeys(
+                [match["item_id"] for match in before]
+                + [match["item_id"] for match in after]
+            ))
+            with ThreadPoolExecutor(8) as pool:
+                judged = list(pool.map(
+                    lambda item_id: judge_pair(
+                        path, catalog.image_path(item_id), client, judge_model, grade_schema
+                    ),
+                    judge_candidate_ids,
+                ))
+            grades_by_id = {item_id: result[0] for item_id, result in zip(judge_candidate_ids, judged)}
+            judge_tokens[0] += sum(result[1] for result in judged)
+            judge_tokens[1] += sum(result[2] for result in judged)
+            row["judge_grades"] = grades_by_id
+            row["judge_metrics"] = {
+                "without_background_before_reranking": judged_ranking_metrics(
+                    [m["item_id"] for m in before], grades_by_id, top_k
+                ),
+                "with_background_before_reranking": judged_ranking_metrics(
+                    [m["item_id"] for m in after], grades_by_id, top_k
+                ),
+                "without_background_after_reranking": judged_ranking_metrics(
+                    [m["item_id"] for m in reranked_before], grades_by_id, top_k
+                ),
+                "with_background_after_reranking": judged_ranking_metrics(
+                    [m["item_id"] for m in reranked_after], grades_by_id, top_k
+                ),
+            }
+        rows.append(row)
         print(f"[{index:02d}/{len(queries)}] {query['category']:10s} AP@{top_k} "
               f"raw {score_before['score']:.3f}->{score_reranked_before['score']:.3f} | "
-              f"background removed {score_after['score']:.3f}->{score_reranked_after['score']:.3f}", flush=True)
+              f"background removed {score_after['score']:.3f}->{score_reranked_after['score']:.3f}"
+              + (f" | judge AP@30 raw {row['judge_metrics']['without_background_before_reranking']['judge_ap_at_30']:.3f}"
+                 f"->{row['judge_metrics']['without_background_after_reranking']['judge_ap_at_30']:.3f}; "
+                 f"processed {row['judge_metrics']['with_background_before_reranking']['judge_ap_at_30']:.3f}"
+                 f"->{row['judge_metrics']['with_background_after_reranking']['judge_ap_at_30']:.3f}"
+                 if judge_setup else ""), flush=True)
 
     before = [r["context_precision_without_background_removal"] for r in rows]
     after = [r["context_precision_with_background_removal"] for r in rows]
@@ -344,7 +474,24 @@ def evaluate(
     if save_baseline:
         report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         plot(report, OUT / "background_ablation.png")
-    reranking_report = build_reranking_report(rows, top_k, seed=seed, manifest_path=manifest_path)
+    judge_metadata = None
+    if judge_setup:
+        client, judge_model, _ = judge_setup
+        judge_metadata = {
+            "enabled": True,
+            "model": judge_model,
+            "relevance_threshold": 2,
+            "grading_prompt": JUDGE_PROMPT,
+            "input_tokens": judge_tokens[0],
+            "output_tokens": judge_tokens[1],
+            "estimated_cost_usd": round((
+                judge_tokens[0] * CONFIG["generator"]["input_usd_per_million_tokens"]
+                + judge_tokens[1] * CONFIG["generator"]["output_usd_per_million_tokens"]
+            ) / 1_000_000, 4),
+        }
+    reranking_report = build_reranking_report(
+        rows, top_k, seed=seed, manifest_path=manifest_path, judge_metadata=judge_metadata
+    )
     suffix = "" if len(rows) == 20 else f"_{len(rows)}"
     reranking_report_path = OUT / f"background_reranking_ablation{suffix}_results.json"
     reranking_report_path.write_text(
@@ -352,10 +499,20 @@ def evaluate(
     )
     plot_reranking_ablation(reranking_report, OUT / f"background_reranking_ablation{suffix}.png")
     plot_combined_reranking_effect(reranking_report, OUT / f"background_reranking_comparison{suffix}.png")
+    if judge_setup:
+        plot_combined_judge_effect(
+            reranking_report, OUT / f"background_reranking_judge_comparison{suffix}.png"
+        )
+        plot_judge_precision_at_k(
+            reranking_report, OUT / f"background_reranking_judge_precision_k{suffix}.png"
+        )
     return report_path
 
 
-def build_reranking_report(rows: list[dict], top_k: int, *, seed: int, manifest_path: Path) -> dict:
+def build_reranking_report(
+    rows: list[dict], top_k: int, *, seed: int, manifest_path: Path,
+    judge_metadata: dict | None = None,
+) -> dict:
     values = {
         "without_background_before_reranking": [
             row["context_precision_without_background_removal"] for row in rows
@@ -396,7 +553,7 @@ def build_reranking_report(rows: list[dict], top_k: int, *, seed: int, manifest_
             )
         ],
     }
-    return {
+    report = {
         "experiment": "paired 2x2 ablation: background removal x hybrid reranking",
         "retrieval": "CLIP image embedding + cosine top-k; reranking uses configured hybrid weights",
         "reranker_weights": CONFIG.get("hybrid_reranker", {}).get("weights", {}),
@@ -410,6 +567,36 @@ def build_reranking_report(rows: list[dict], top_k: int, *, seed: int, manifest_
         "paired_effects": {name: mean_ci(scores) for name, scores in effects.items()},
         "queries": rows,
     }
+    if judge_metadata:
+        judge_condition_names = tuple(values)
+        judged_metrics = ("judge_ap_at_30", "judge_precision_at_5", "judge_precision_at_10", "judge_precision_at_30")
+        report["judge_evaluation"] = {
+            **judge_metadata,
+            "metric_note": "Judge grade >= 2 is relevant; AP@30 is rank-sensitive, Precision@k is reported for comparison.",
+            "conditions": {
+                condition: {
+                    metric: mean_ci([row["judge_metrics"][condition][metric] for row in rows])
+                    for metric in judged_metrics
+                }
+                for condition in judge_condition_names
+            },
+            "paired_effects": {
+                effect: {
+                    metric: mean_ci([
+                        row["judge_metrics"][second][metric] - row["judge_metrics"][first][metric]
+                        for row in rows
+                    ])
+                    for metric in judged_metrics
+                }
+                for effect, first, second in (
+                    ("background_effect_before_reranking", "without_background_before_reranking", "with_background_before_reranking"),
+                    ("background_effect_after_reranking", "without_background_after_reranking", "with_background_after_reranking"),
+                    ("reranking_effect_without_background_removal", "without_background_before_reranking", "without_background_after_reranking"),
+                    ("reranking_effect_with_background_removal", "with_background_before_reranking", "with_background_after_reranking"),
+                )
+            },
+        }
+    return report
 
 
 def plot_reranking_ablation(report: dict, path: Path) -> None:
@@ -505,6 +692,85 @@ def plot_combined_reranking_effect(report: dict, path: Path) -> None:
     plt.close(fig)
 
 
+def plot_combined_judge_effect(report: dict, path: Path) -> None:
+    """Plot judge-based AP@30 before/after reranking with both background arms."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    judge = report["judge_evaluation"]
+    groups = ["Before reranking", "After reranking"]
+    series = [
+        ("Without background removal", "#8da0cb", [
+            "without_background_before_reranking", "without_background_after_reranking",
+        ]),
+        ("With background removal", "#66c2a5", [
+            "with_background_before_reranking", "with_background_after_reranking",
+        ]),
+    ]
+    x = np.arange(2)
+    width = .34
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    for offset, (label, color, keys) in enumerate(series):
+        positions = x + (offset - .5) * width
+        means = [judge["conditions"][key]["judge_ap_at_30"][0] for key in keys]
+        low = [judge["conditions"][key]["judge_ap_at_30"][0] - judge["conditions"][key]["judge_ap_at_30"][1] for key in keys]
+        high = [judge["conditions"][key]["judge_ap_at_30"][2] - judge["conditions"][key]["judge_ap_at_30"][0] for key in keys]
+        ax.bar(positions, means, width=width, color=color, label=label, zorder=2)
+        ax.errorbar(positions, means, yerr=[low, high], fmt="none", ecolor="#263238",
+                    capsize=4, linewidth=1.4, zorder=3)
+    ax.set_xticks(x, groups)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Judge-based AP@30 (grade ≥ 2 is relevant)")
+    ax.set_title("LLM-judged relevance: background removal before and after reranking")
+    ax.grid(axis="y", alpha=.25)
+    ax.legend(frameon=False)
+    fig.text(.5, .015,
+             f"Mean across {report['n_queries']} queries; bars show 95% bootstrap CI. "
+             f"Judge: {judge['model']}; reranker still uses category/color proxy features.",
+             ha="center", fontsize=8.5, color="#4b5563")
+    fig.tight_layout(rect=(0, .06, 1, .94))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_judge_precision_at_k(report: dict, path: Path) -> None:
+    """Plot judge Precision@5/@10/@30 to compare directly with the mate's chart."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    judge = report["judge_evaluation"]
+    conditions = (
+        "without_background_before_reranking",
+        "with_background_before_reranking",
+        "without_background_after_reranking",
+        "with_background_after_reranking",
+    )
+    labels = ("No background\nbefore", "Background removed\nbefore",
+              "No background\nafter", "Background removed\nafter")
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    palette = ("#2878b5", "#ef7d22", "#2f9e44")
+    for index, k in enumerate((5, 10, 30)):
+        metric = f"judge_precision_at_{k}"
+        means = [judge["conditions"][condition][metric][0] for condition in conditions]
+        ax.plot(range(4), means, marker="o", lw=2, color=palette[index], label=f"Precision@{k}")
+        for x, y in enumerate(means):
+            ax.annotate(f"{y:.3f}", (x, y), textcoords="offset points",
+                        xytext=(0, 6 + index * 8), ha="center", fontsize=8, color=palette[index])
+    ax.set_xticks(range(4), labels)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Precision@k (LLM grade ≥ 2)")
+    ax.set_title("LLM-judged Precision@k across the four conditions")
+    ax.grid(alpha=.25)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot(report: dict, path: Path) -> None:
     import matplotlib
     matplotlib.use("Agg")
@@ -549,6 +815,7 @@ def main() -> None:
     parser.add_argument("--download-only", action="store_true", help="Download and record images without evaluating")
     parser.add_argument("--plot-only", action="store_true", help="Regenerate the reranking plot from saved results")
     parser.add_argument("--reranking-only", action="store_true", help="Run the 2x2 study without replacing the original ablation outputs")
+    parser.add_argument("--judge", action="store_true", help="Use the vision LLM to label retrieval relevance (API calls/cost)")
     parser.add_argument("--n", type=int, default=20, help="Number of external query images")
     parser.add_argument("--top-k", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)
@@ -556,6 +823,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.n < 1 or args.top_k < 1:
         parser.error("--n and --top-k must be positive")
+    if args.judge and args.top_k < 30:
+        parser.error("--judge reports AP@30 and Precision@30; set --top-k to at least 30")
     manifest_path = args.manifest or MANIFEST
     if args.download:
         rows = download_commons(args.n, args.force_download)
@@ -573,11 +842,14 @@ def main() -> None:
         reranking_report = json.loads(saved_report.read_text(encoding="utf-8"))
         plot_reranking_ablation(reranking_report, OUT / f"background_reranking_ablation{suffix}.png")
         plot_combined_reranking_effect(reranking_report, OUT / f"background_reranking_comparison{suffix}.png")
+        if reranking_report.get("judge_evaluation", {}).get("enabled"):
+            plot_combined_judge_effect(reranking_report, OUT / f"background_reranking_judge_comparison{suffix}.png")
+            plot_judge_precision_at_k(reranking_report, OUT / f"background_reranking_judge_precision_k{suffix}.png")
         print(f"Plot: {OUT / f'background_reranking_comparison{suffix}.png'}")
         return
     result = evaluate(
         args.n, args.top_k, save_baseline=not args.reranking_only,
-        manifest_path=manifest_path, seed=args.seed,
+        manifest_path=manifest_path, seed=args.seed, use_judge=args.judge,
     )
     if not args.reranking_only:
         report = json.loads(result.read_text(encoding="utf-8"))
@@ -595,6 +867,13 @@ def main() -> None:
     for effect, values in rerank_report["paired_effects"].items():
         print(f"{effect}: {values}")
     print(f"Plot: {OUT / f'background_reranking_comparison{suffix}.png'}")
+    if rerank_report.get("judge_evaluation", {}).get("enabled"):
+        judge_report = rerank_report["judge_evaluation"]
+        print("\nLLM judge AP@30 and Precision@k (95% bootstrap CI)")
+        for condition, metrics in judge_report["conditions"].items():
+            print(f"{condition}: {metrics}")
+        print(f"Judge model: {judge_report['model']}; estimated cost: ${judge_report['estimated_cost_usd']:.4f}")
+        print(f"Judge AP@30 plot: {OUT / f'background_reranking_judge_comparison{suffix}.png'}")
 
 
 if __name__ == "__main__":
