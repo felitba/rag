@@ -200,22 +200,13 @@ proveedor.
 
 ```text
 fashion-rag/
-├── app/
-│   ├── main.py
-│   ├── config.py
-│   ├── data/
-│   │   ├── garments.json
-│   │   └── outfits.json
-│   └── services/
-│       ├── catalog_service.py
-│       ├── clip_service.py
-│       ├── chroma_service.py
-│       ├── outfit_service.py
-│       └── openai_service.py
-├── catalog/garments/       # fotografías originales del catálogo
-├── scripts/index_catalog.py
-├── storage/chroma/          # persistencia local (se crea automáticamente)
-├── frontend/                # React + Vite
+├── home_made_rag/       # backend FastAPI, RAG, catálogo y modelos
+├── frontend/            # interfaz React + Vite
+├── scripts/             # preparación del catálogo, indexación y evaluación
+├── data/                # catálogo e imágenes locales (generados, ignorados por Git)
+├── chroma_db/           # índice vectorial local (generado, ignorado por Git)
+├── models/type_aware/   # pesos y espacios type-aware
+├── storage/             # uploads y base del monitor
 ├── .env.example
 └── requirements.txt
 ```
@@ -241,44 +232,23 @@ Instalá PyTorch siguiendo la opción CPU/CUDA apropiada para tu computadora en 
 
 ```powershell
 pip install -r requirements.txt
-pip install git+https://github.com/openai/CLIP.git
 Copy-Item .env.example .env
 ```
 
-Editá `.env` y reemplazá `OPENAI_API_KEY=replace_me` por tu clave. No la guardes en React ni la subas a Git.
+Editá `.env` y reemplazá `LLM_API_KEY=replace_me` por tu clave. No la guardes en React ni la subas a Git.
 
 La instalación de CLIP se hace desde el repositorio oficial para no confundirlo con otros paquetes de Python que también se llaman `clip`.
 
-## 3. Agregar las imágenes
+## 3. Preparar el catálogo
 
-Copiá tus fotos a `catalog/garments/`. Después editá `app/data/garments.json` con una entrada por prenda:
+Para descargar una muestra de Polyvore y guardar el catálogo en `data/`, ejecutá:
 
-```json
-{
-  "garment_id": "jacket_104",
-  "image_path": "catalog/garments/jacket_104.jpg",
-  "category": "jacket",
-  "color": "black",
-  "style": "streetwear",
-  "price": 89.99,
-  "available": true
-}
+```bash
+python scripts/prepare_polyvore.py --n 200
 ```
 
-`garment_id` debe ser único y `image_path` debe señalar una imagen que esté dentro de la carpeta `catalog/`. Los campos de categoría, color, estilo y precio son tus metadatos del catálogo; adaptalos a tu esquema.
-
-En `app/data/outfits.json`, definí cada outfit con los IDs de todas sus prendas:
-
-```json
-{
-  "outfit_1": ["jacket_104", "shirt_025", "jeans_083", "shoes_011"],
-  "outfit_2": ["jacket_108", "shirt_041", "jeans_092", "shoes_036"]
-}
-```
-
-Cada ID referenciado en `outfits.json` debe existir en `garments.json`. Cada prenda puede pertenecer a cero, uno o varios outfits. El proceso de indexación construye la relación inversa automáticamente; no hace falta mantener a mano los `outfit_ids` dentro de `garments.json`.
-
-El JSON incluido trae datos ilustrativos y rutas de imágenes de ejemplo. Antes de indexar, reemplazá o completá esos datos y agregá los archivos correspondientes.
+El tamaño de la muestra se puede cambiar con `--n`. La configuración del dataset,
+las rutas locales y el split están en `home_made_rag/config.json`.
 
 ## 4. Indexar / reconstruir ChromaDB
 
@@ -288,12 +258,12 @@ python scripts/index_catalog.py
 
 El script valida las referencias y la existencia de todas las imágenes, estima y guarda el color faltante de cada garment, y después **reconstruye la colección completa** con embeddings CLIP y metadata de categoría/color. Si agregás, quitás o modificás fotos, volvé a ejecutarlo.
 
-ChromaDB persiste los vectores en `storage/chroma/`. No subas esa carpeta a Git; podés reconstruirla usando el catálogo.
+ChromaDB persiste los vectores en `chroma_db/`. No subas esa carpeta a Git; podés reconstruirla usando el catálogo.
 
 ## 5. Iniciar FastAPI
 
 ```powershell
-uvicorn app.main:app --reload --port 8000
+uvicorn home_made_rag.main:app --reload --port 8000
 ```
 
 - Swagger: <http://localhost:8000/docs>
@@ -327,21 +297,16 @@ VITE_API_BASE_URL=http://localhost:8000
 | `OPENAI_API_KEY` | Credencial fallback para uso directo de OpenAI | Opcional; no reemplaza la clave del proxy |
 | `OPENAI_MODEL` | Sobrescribe el modelo del generador | `gpt-4.1-mini` |
 | `OPENAI_BASE_URL` | Sobrescribe la URL base del proxy | `https://sa-llmproxy.it.itba.edu.ar/` |
-| `CLIP_MODEL` | Modelo de CLIP local | `ViT-B/32` |
-| `CHROMA_PATH` | Directorio persistente | `storage/chroma` |
-| `COLLECTION_NAME` | Colección vectorial | `fashion_garments` |
-| `TOP_K_GARMENTS` | Cantidad máxima de prendas candidatas | `30` |
-| `MAX_OUTFITS` | Outfits devueltos | `5` |
-| `MAX_IMAGES_PER_OUTFIT_FOR_LLM` | Imágenes del catálogo enviadas al LLM por outfit | `2` |
-| `MAX_UPLOAD_MB` | Tamaño máximo de foto subida | `10` |
+| `OPENROUTER_API_KEY` | Clave opcional para el proveedor fallback OpenRouter | Opcional |
+| `OPENROUTER_MODEL` | Sobrescribe el modelo OpenRouter | `openrouter/free` |
+| `HF_TOKEN` | Clave opcional para activar el fallback Hugging Face | Opcional |
+| `HF_MODEL` | Sobrescribe el modelo Hugging Face | `Qwen/Qwen3-32B` |
+| `VITE_API_BASE_URL` | URL del backend para el frontend | `http://localhost:8000` |
+
+El modelo CLIP, el directorio de Chroma, el top-k y los límites de resultados se
+configuran en `home_made_rag/config.json`.
 
 Si la API key falta o OpenAI falla, el backend todavía puede devolver outfits recuperados y una explicación de fallback. Instalá las dependencias con `pip install -r requirements.txt`.
-
-Ejecutá las pruebas de validación de IDs con:
-
-```bash
-python -m unittest discover -s tests
-```
 
 Ejemplo de respuesta con generación exitosa (los datos de las prendas se
 resuelven siempre desde el catálogo):
@@ -373,7 +338,7 @@ Conviene evaluarlo con fotos de prueba etiquetadas y luego ajustar el ranking, p
 ## Consideraciones antes de producción
 
 - El endpoint comprueba tamaño, formato y dimensiones de la imagen; las imágenes subidas se normalizan y se borran al finalizar la solicitud.
-- El backend sirve las fotos del catálogo por `/catalog/...`. No coloques allí archivos privados.
+- El backend sirve las fotos del catálogo desde `data/images/` bajo `/images/...`. No coloques allí archivos privados.
 - La clave de OpenAI se mantiene en el backend.
 - En producción, agregá autenticación/rate limiting, logging estructurado, límites de concurrencia para CLIP, monitoreo de costos de OpenAI y almacenamiento de imágenes adecuado.
 - El ranking visual debe validarse con fotos reales de usuarios. CLIP puede verse influido por fondo, pose, iluminación o por varias prendas visibles en una sola foto.
