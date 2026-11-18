@@ -112,6 +112,7 @@
     },
     "top_n_outfits": 10,
     "max_generated_outfits": 3,
+    "extra_drafts": 2,
     "timeout_seconds": 25,
     "use_images": false,
     "max_images": 60,

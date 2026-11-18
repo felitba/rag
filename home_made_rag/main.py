@@ -131,6 +131,7 @@ async def lifespan(app: FastAPI):
                 fallbacks=fallback_providers,
                 use_images=generator_settings.get("use_images", False),
                 max_images=generator_settings.get("max_images", 30),
+                extra_drafts=generator_settings.get("extra_drafts", 2),
             )
             provider_order = ", ".join(
                 f"{provider['name']}:{provider['model']}" for provider in generator.providers

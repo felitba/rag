@@ -35,6 +35,10 @@ def timed(timings, stage):
             timings[stage] = round(timings.get(stage, 0.0) + elapsed_ms, 1)
 
 
+# Categories where a look can hold one garment only.
+SINGLE_GARMENT_SLOTS = ("shoes", "bottoms", "all-body", "outerwear", "bags", "hats", "sunglasses", "scarves")
+
+
 class RAG:
     def __init__(
         self,
@@ -406,7 +410,8 @@ class RAG:
             for garment_id in outfit.get("matched_garment_ids", [])
         }
         resolved = []
-        for draft in generated.get("outfits", [])[: self.generator.max_generated_outfits]:
+        verdicts = []
+        for draft in generated.get("outfits", []):
             garment_ids = draft.get("garment_ids", [])
             source_ids = draft.get("source_outfit_ids", [])
             # One line per draft for the monitor: what the model proposed and the verdict.
@@ -527,7 +532,20 @@ class RAG:
                     if item["garment_id"] not in selected
                 ]
 
+            if look_kind == "mix":
+                # A mix is the model's own judgement, so its composition is checked:
+                # one garment per body slot (jewellery, accessories and tops may repeat).
+                slots = [candidate_items[item_id].get("category") for item_id in garment_ids]
+                repeated = sorted(
+                    slot for slot in SINGLE_GARMENT_SLOTS if slots.count(slot) > 1
+                )
+                if repeated:
+                    logger.warning("Discarding generated outfit reason=repeated_body_slot slots=%s", repeated)
+                    verdict["reason"] = "repeated_body_slot"
+                    continue
+
             verdict.update(accepted=True, look_kind=look_kind, source_outfits=resolved_sources)
+            verdicts.append(verdict)
             # Garments may recur across different generated looks; only duplicates
             # within this one look are rejected above.
             resolved.append({
@@ -545,7 +563,18 @@ class RAG:
                 "matched_garment_ids": [item_id for item_id in garment_ids if item_id in query_matched_ids],
                 "items": [candidate_items[item_id] for item_id in garment_ids],
             })
-        return resolved
+
+        # More looks are requested than shown. New combinations go first, then complete
+        # real outfits; an outfit with garments removed only fills a slot left empty.
+        priority = {"mix": 0, "existing": 1, "trimmed": 2}
+        order = sorted(range(len(resolved)), key=lambda index: priority[resolved[index]["look_kind"]])
+        limit = self.generator.max_generated_outfits
+        for index in order[limit:]:
+            verdicts[index].update(accepted=False, reason="lower_priority_than_shown_looks")
+        shown = [resolved[index] for index in order[:limit]]
+        for position, look in enumerate(shown, start=1):
+            look["outfit_id"] = f"generated_{position:02d}"
+        return shown
     
     def _rewrite(self, text, owned_category, request_id, has_photo):
         """Pre-retrieval: turn the user's text into embedded English garment queries."""
