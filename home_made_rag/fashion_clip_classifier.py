@@ -79,10 +79,6 @@ class FashionClipCategoryClassifier:
         self.labels = sorted(set(labels or settings.get("labels", [])))
         if not self.labels:
             raise ValueError("No hay categorías en el catálogo para clasificar la imagen")
-        configured_margin = settings.get("minimum_margin")
-        self.minimum_margin = (
-            None if configured_margin is None else max(0.0, float(configured_margin))
-        )
         self.device = self._pick_device(CONFIG["embeddings"]["device"])
         self._model: CLIPModel | None = None
         self._processor: CLIPProcessor | None = None
@@ -130,19 +126,11 @@ class FashionClipCategoryClassifier:
             for index in order[: min(3, len(order))]
         ]
         margin = float(similarities[order[0]] - similarities[order[1]]) if len(order) > 1 else 0.0
-        uncertain = (
-            len(self.labels) > 1
-            and self.minimum_margin is not None
-            and margin < self.minimum_margin
-        )
         return {
-            "label": None if uncertain else ranked_categories[0]["label"],
-            "best_label": ranked_categories[0]["label"],
+            "label": ranked_categories[0]["label"],
             "similarity": ranked_categories[0]["similarity"],
             "margin": round(margin, 4),
-            "uncertain": uncertain,
-            "minimum_margin": self.minimum_margin,
-            "alternatives": ranked_categories if uncertain else ranked_categories[1:],
+            "alternatives": ranked_categories[1:],
         }
 
     def _get_model(self) -> tuple[CLIPModel, CLIPProcessor]:

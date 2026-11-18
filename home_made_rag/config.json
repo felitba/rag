@@ -43,8 +43,7 @@
   },
   "category_classifier": {
     "enabled": true,
-    "model_name": "patrickjohncyh/fashion-clip",
-    "minimum_margin": 0.015
+    "model_name": "patrickjohncyh/fashion-clip"
   },
   "hybrid_reranker": {
     "weights": {

@@ -20,9 +20,5 @@ Orag.log
 /chroma_db/
 /logs/
 /frontend/package-lock.json
-remember.txt
-
-.claude/agents/tp3-tutor.md
-CLAUDE.md
 storage/monitoring_inputs/
 hf_token
