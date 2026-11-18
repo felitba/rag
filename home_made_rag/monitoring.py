@@ -358,6 +358,7 @@ class MonitoringService:
                 "matched_garment_ids": outfit.get("matched_garment_ids", []),
                 "generated": bool(outfit.get("generated", False)),
                 "score": outfit.get("score"),
+                "type_aware_compatibility": outfit.get("type_aware_compatibility"),
                 "items": monitored_items,
             }
             records.append((

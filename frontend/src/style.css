@@ -149,6 +149,25 @@ h2 { font-family: 'Playfair Display', serif; font-size: 29px; font-weight: 500; 
 .monitor-generator-item span, .monitor-generator-item details { color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
 .monitor-generator-item summary { cursor: pointer; color: var(--accent); }
 .monitor-generator-item pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; background: #f5f2ec; padding: 7px; }
+.monitor-compatibility-summary { margin: 8px 0; padding: 8px 9px; border: 1px solid #d9e1d2; background: #f3f6f0; color: #35523a; font-size: 10px; line-height: 1.5; }
+.monitor-compatibility-summary.status-unavailable, .monitor-compatibility-summary.status-error { border-color: #ead3ca; background: #fff5f1; color: #87503e; }
+.monitor-compatibility-summary.status-unscorable { border-color: var(--line); background: #f5f2ec; color: var(--muted); }
+.monitor-compatibility-heading { display: flex; justify-content: space-between; gap: 8px; }
+.monitor-compatibility-heading span { color: inherit; font-weight: 600; white-space: nowrap; }
+.monitor-compatibility-summary p { margin: 3px 0 0; color: inherit; }
+.monitor-compatibility-pairs { margin-top: 7px; font-size: 10px; }
+.monitor-compatibility-pairs summary { cursor: pointer; color: var(--accent); }
+.monitor-compatibility-pairs .monitor-table { margin-top: 5px; }
+.monitor-compatibility-panel { margin-top: 14px; padding: 14px; border: 1px solid var(--line); background: #fbfaf7; }
+.monitor-compatibility-panel h3 { margin: 0 0 5px; font-size: 16px; }
+.monitor-compatibility-panel .monitor-generator-heading > span { max-width: 320px; text-align: right; }
+.monitor-compatibility-kpis { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0; color: var(--muted); font-size: 11px; }
+.monitor-compatibility-kpis strong { color: var(--accent); font-size: 18px; margin-right: 4px; }
+.monitor-compatibility-table { background: var(--paper); }
+.monitor-compatibility-pair-list { display: grid; gap: 7px; margin-top: 12px; }
+.monitor-compatibility-pair-list > div { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.monitor-compatibility-pair-list > div > strong { font-size: 11px; }
+.monitor-compatibility-pair-list .monitor-compatibility-pairs { flex: 1; min-width: 230px; margin-top: 0; }
 .monitor-muted, .monitor-footnote { color: var(--muted); font-size: 11px; }
 .monitor-error { background: #fff0ed; color: #9c302a; padding: 10px 14px; margin: 14px 0; font-size: 12px; }
 .monitor-footnote { margin-top: 14px; }
@@ -159,6 +178,14 @@ h2 { font-family: 'Playfair Display', serif; font-size: 29px; font-weight: 500; 
 h3 { font-family: 'Playfair Display', serif; font-weight: 500; font-size: 23px; margin-bottom: 0; }
 .outfit-tag { color: var(--accent); background: #eef0e9; padding: 6px 11px; font-size: 11px; white-space: nowrap; border-radius: 999px; }
 .outfit-description { color: #45433e; font-size: 14px; line-height: 1.6; margin: -6px 0 12px; max-width: 760px; }
+.outfit-compatibility { margin: 0 0 16px; padding: 10px 12px; border: 1px solid #d9e1d2; border-radius: var(--radius-sm); background: #f3f6f0; color: #35523a; font-size: 12px; line-height: 1.5; }
+.outfit-compatibility.status-unavailable, .outfit-compatibility.status-error { border-color: #ead3ca; background: #fff5f1; color: #87503e; }
+.outfit-compatibility.status-unscorable { border-color: var(--line); background: #f5f2ec; color: var(--muted); }
+.outfit-compatibility-heading { display: flex; justify-content: space-between; gap: 12px; }
+.outfit-compatibility-heading span { font-weight: 600; white-space: nowrap; }
+.outfit-compatibility p { margin: 3px 0 0; color: inherit; }
+.outfit-compatibility p strong { font-size: 15px; }
+.outfit-compatibility small { display: block; margin-top: 3px; color: inherit; opacity: .8; }
 .garment-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
 .garment-card { min-width: 0; }
 .garment-image-wrap { position: relative; background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); aspect-ratio: 1; overflow: hidden; }

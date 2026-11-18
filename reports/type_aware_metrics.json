@@ -1,0 +1,18 @@
+{
+  "evaluated_at_utc": "2026-11-18T17:37:40.455567+00:00",
+  "benchmark": "Polyvore Outfits disjoint test",
+  "checkpoint_source": "gyao15/fashion disjoint checkpoint",
+  "checkpoint": "models/type_aware/model_best.pth.tar",
+  "distance": "Euclidean in the matching type-specific embedding",
+  "learned_metric_head": false,
+  "embedding_dim": 64,
+  "type_spaces": 66,
+  "compatibility_auc": 0.8424722412083218,
+  "compatibility_examples": 30290,
+  "compatibility_positive_examples": 15145,
+  "compatibility_negative_examples": 15145,
+  "fitb_accuracy": 0.5630901287553648,
+  "fitb_correct": 8528,
+  "fitb_questions": 15145,
+  "images_encoded": 70035
+}
