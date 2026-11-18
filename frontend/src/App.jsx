@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { API_BASE, FromStore, PageLayout, categoryLabel, colorLabel, useCatalog } from "./shared.jsx";
+import { API_BASE, FromStore, PageLayout, categoryLabel, colorLabel, formatNumber, useCatalog } from "./shared.jsx";
 
 const LOOK_KIND_LABELS = {
   existing: "Outfit del catálogo",
@@ -17,6 +17,42 @@ const SAMPLE_TEXTS = [
 
 // Prendas del catálogo local; si la imagen no existe, la miniatura se oculta sola.
 const SAMPLE_GARMENT_IDS = ["48678871", "111273640", "100263578", "105301005"];
+
+const COMPATIBILITY_STATUS_LABELS = {
+  scored: "evaluado",
+  partial: "parcial",
+  unavailable: "no disponible",
+  unscorable: "sin pares",
+  error: "error",
+};
+
+function TypeAwareCompatibility({ report }) {
+  if (!report) return null;
+  const hasScore = Number.isFinite(report.compatibility_similarity);
+  const status = COMPATIBILITY_STATUS_LABELS[report.status] || report.status || "sin dato";
+  const missing = report.missing_garment_ids?.length || 0;
+
+  return (
+    <div className={`outfit-compatibility status-${report.status || "unknown"}`}>
+      <div className="outfit-compatibility-heading">
+        <strong>Compatibilidad type-aware</strong>
+        <span>{status}</span>
+      </div>
+      {hasScore ? (
+        <p>
+          <strong>{formatNumber(report.compatibility_similarity, 4)}</strong>
+          {" · similitud normalizada · "}
+          {formatNumber(report.pair_count)} pares
+          {report.fallback_pair_count ? ` · ${formatNumber(report.fallback_pair_count)} con espacio general` : ""}
+          {missing ? ` · ${formatNumber(missing)} prendas sin imagen` : ""}
+        </p>
+      ) : (
+        <p>{report.reason || "No se pudo calcular para este outfit."}</p>
+      )}
+      {hasScore && <small>Escala 0–1; no es una probabilidad. El score original del paper queda disponible como compatibility_score en la respuesta.</small>}
+    </div>
+  );
+}
 
 function OutfitCards({ outfits, matchLabel }) {
   return (
@@ -47,6 +83,7 @@ function OutfitCards({ outfits, matchLabel }) {
                 {outfit.style_tags.map((tag) => <span key={tag}>{tag}</span>)}
               </div>
             )}
+            <TypeAwareCompatibility report={outfit.type_aware_compatibility} />
             <div className="garment-grid">
               {(outfit.items || []).map((item) => (
                 <div className="garment-card" key={item.garment_id}>

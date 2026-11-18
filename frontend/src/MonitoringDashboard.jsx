@@ -348,6 +348,13 @@ function PipelineSteps({ detail }) {
         ? `${drafts.filter((draft) => draft.accepted).length} de ${drafts.length} looks propuestos aceptados`
         : detail.generation_status === "fallback" ? "ningún look válido: fallback al catálogo" : null,
     },
+    {
+      name: "Evaluación type-aware",
+      what: "El modelo ECCV 2018 compara cada par de prendas en el espacio específico de sus categorías y promedia las distancias. El score mostrado es 1 − distancia media.",
+      text: trace?.compatibility
+        ? `${trace.compatibility.model?.available ? "disponible" : "no disponible"} · ${formatNumber((trace.compatibility.stages?.generator_output || []).filter((item) => item.compatibility_similarity !== null && item.compatibility_similarity !== undefined).length)} outfits puntuados`
+        : null,
+    },
   ];
   return (
     <section className="monitor-pipeline">
@@ -417,6 +424,8 @@ function ConfigUsed({ config }) {
     ["Outfits al generador (top_n)", config.generator ? config.top_n_outfits : config.max_outfits],
     ["Looks pedidos", config.max_generated_outfits],
     ["Generador ve imágenes", onOff(config.generator_uses_images)],
+    ["Evaluador type-aware", config.type_aware_compatibility?.available ? "disponible" : config.type_aware_compatibility?.reason || "no disponible"],
+    ["Espacios type-aware", config.type_aware_compatibility?.type_spaces || "—"],
   ];
   return (
     <section className="monitor-pipeline">
@@ -765,6 +774,122 @@ function CandidateList({ title, candidates, stage, previousRanks, weights }) {
   );
 }
 
+const COMPATIBILITY_STATUS_LABELS = {
+  scored: "evaluado",
+  partial: "parcial",
+  unavailable: "no disponible",
+  unscorable: "sin pares",
+  error: "error",
+};
+
+function compatibilityReport(outfit) {
+  return outfit?.type_aware_compatibility || null;
+}
+
+function CompatibilitySummary({ report }) {
+  if (!report) return null;
+  const status = COMPATIBILITY_STATUS_LABELS[report.status] || report.status || "sin dato";
+  const hasScore = report.compatibility_similarity !== null && report.compatibility_similarity !== undefined;
+  const weakest = report.weakest_pair;
+  return (
+    <div className={`monitor-compatibility-summary status-${report.status || "unknown"}`}>
+      <div className="monitor-compatibility-heading">
+        <strong>Type-aware · {status}</strong>
+        {hasScore && <span>similitud {formatNumber(report.compatibility_similarity, 4)}</span>}
+      </div>
+      {hasScore ? (
+        <p>
+          escala 0–1 · distancia media {formatNumber(report.mean_distance, 4)} · {formatNumber(report.pair_count)} pares
+          {report.fallback_pair_count ? ` · ${formatNumber(report.fallback_pair_count)} pares con embedding general` : ""}
+          {weakest?.type_pair ? ` · par más débil: ${weakest.type_pair}` : ""}
+        </p>
+      ) : <p>{report.reason || "El modelo no pudo puntuar este outfit."}</p>}
+    </div>
+  );
+}
+
+function CompatibilityPairs({ report }) {
+  if (!report?.pairs?.length) return null;
+  return (
+    <details className="monitor-compatibility-pairs">
+      <summary>Ver score de cada par ({report.pairs.length})</summary>
+      <table className="monitor-table">
+        <thead>
+          <tr><th>Par</th><th>Tipos</th><th>Similitud 0–1</th><th>Score original</th><th>Distancia</th><th>Espacio</th></tr>
+        </thead>
+        <tbody>
+          {report.pairs.map((pair) => (
+            <tr key={`${pair.garment_1}-${pair.garment_2}`}>
+              <td>{pair.garment_1} · {pair.garment_2}</td>
+              <td>{pair.type_pair}</td>
+              <td>{formatNumber(pair.compatibility_similarity, 4)}</td>
+              <td>{formatNumber(pair.compatibility_score, 4)}</td>
+              <td>{formatNumber(pair.distance, 4)}</td>
+              <td>{pair.used_general_embedding ? "general" : "tipo-aware"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
+  );
+}
+
+function CompatibilityPanel({ detail }) {
+  const outfits = detail.generator_output || [];
+  const trace = detail.pipeline_trace?.compatibility;
+  const model = trace?.model;
+  if (!outfits.length) {
+    return <p className="monitor-muted">No hay outfits de salida para evaluar.</p>;
+  }
+  const scored = outfits.filter((outfit) => {
+    const score = compatibilityReport(outfit)?.compatibility_similarity;
+    return score !== null && score !== undefined;
+  });
+  return (
+    <section className="monitor-compatibility-panel">
+      <div className="monitor-generator-heading">
+        <div>
+          <h3>Compatibilidad de todos los outfits de salida</h3>
+          <p className="monitor-muted">Similitud = 1 − distancia euclidiana media normalizada / 2. Va de 0 a 1; más alto indica embeddings más cercanos. No es una probabilidad.</p>
+        </div>
+        {model && <span>{model.available ? `${model.model} · ${model.type_spaces || "—"} espacios` : `No disponible: ${model.reason || "faltan assets"}`}</span>}
+      </div>
+      <div className="monitor-compatibility-kpis">
+        <span><strong>{formatNumber(scored.length)}</strong> outfits evaluados</span>
+        <span><strong>{formatNumber(outfits.length)}</strong> outfits de salida</span>
+      </div>
+      <table className="monitor-table monitor-compatibility-table">
+        <thead>
+          <tr><th>Outfit</th><th>Estado</th><th>Similitud 0–1</th><th>Distancia media</th><th>Pares</th><th>Par más débil</th></tr>
+        </thead>
+        <tbody>
+          {outfits.map((outfit, index) => {
+            const report = compatibilityReport(outfit);
+            return (
+              <tr key={`${outfit.outfit_id || index}-compatibility`}>
+                <td>#{outfit.rank || index + 1} · {outfit.name || outfit.outfit_id || "Outfit"}</td>
+                <td><span className={`monitor-chip status-${report?.status || "pending"}`}>{COMPATIBILITY_STATUS_LABELS[report?.status] || report?.status || "sin evaluar"}</span></td>
+                <td>{report?.compatibility_similarity === undefined || report?.compatibility_similarity === null ? "—" : formatNumber(report.compatibility_similarity, 4)}</td>
+                <td>{report?.mean_distance === undefined ? "—" : formatNumber(report.mean_distance, 4)}</td>
+                <td>{formatNumber(report?.pair_count)}</td>
+                <td>{report?.weakest_pair?.type_pair || report?.reason || "—"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div className="monitor-compatibility-pair-list">
+        {outfits.map((outfit, index) => (
+          <div key={`${outfit.outfit_id || index}-compatibility-pairs`}>
+            <strong>{outfit.name || outfit.outfit_id || `Outfit ${index + 1}`}</strong>
+            <CompatibilityPairs report={compatibilityReport(outfit)} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function GeneratorOutfitList({ title, outfits, stage }) {
   return (
     <section className="monitor-generator-stage">
@@ -781,6 +906,8 @@ function GeneratorOutfitList({ title, outfits, stage }) {
                 ID: {outfit.outfit_id || "s/d"}
                 {outfit.score !== null && outfit.score !== undefined && ` · score ${formatNumber(outfit.score, 4)}`}
               </p>
+              <CompatibilitySummary report={compatibilityReport(outfit)} />
+              <CompatibilityPairs report={compatibilityReport(outfit)} />
               {outfit.description && <p className="monitor-description">{outfit.description}</p>}
               {outfit.explanation && <p className="monitor-generator-explanation">{outfit.explanation}</p>}
               {outfit.look_kind && <p className="monitor-generator-ids">Tipo de look: {outfit.look_kind}{outfit.omitted_garment_ids?.length > 0 && ` · prendas omitidas: ${outfit.omitted_garment_ids.join(", ")}`}</p>}
@@ -924,6 +1051,7 @@ export default function MonitoringDashboard() {
     { key: "retrieval", label: "2 · Retrieval y reranking", count: detail.reranked?.length },
     { key: "outfits", label: "3 · Outfits", count: detail.pipeline_trace?.outfit_hop?.outfits_kept ?? detail.generator_input?.length },
     { key: "generator", label: "4 · Generador", count: detail.generator_output?.length },
+    { key: "compatibility", label: "5 · Compatibilidad", count: detail.generator_output?.length },
   ] : [];
   const previousRanks = detail ? Object.fromEntries((detail.retrieved || []).map((item) => [item.garment_id, item.rank])) : {};
   const activeTab = tabs.some((item) => item.key === tab) ? tab : "summary";
@@ -1146,6 +1274,8 @@ export default function MonitoringDashboard() {
                   </div>
                 </section>
               )}
+
+              {activeTab === "compatibility" && <CompatibilityPanel detail={detail} />}
               </div>
             </>
           )}
