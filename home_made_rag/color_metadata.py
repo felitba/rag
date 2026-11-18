@@ -11,15 +11,23 @@ from typing import Any
 from PIL import Image, ImageOps
 
 
+# Key under which ForegroundPreprocessor stores its garment mask in Image.info.
+FOREGROUND_MASK_KEY = "foreground_mask"
+
+
 def estimate_garment_color(image_path: Image.Image | str | Path) -> dict[str, str | float]:
     """Return a dominant palette label, confidence, and representative RGB.
 
-    The estimator downsamples the image, masks a flat background connected to
-    the borders, maps foreground pixels into a fixed HSV palette, then picks
-    the most frequent palette label. Confidence is the share of retained pixels
+    The estimator downsamples the image, keeps the garment pixels, maps them
+    into a fixed HSV palette, then picks the most frequent palette label.
+    Garment pixels come from the background-removal mask when the image went
+    through ForegroundPreprocessor; otherwise a flat background connected to
+    the borders is masked out. Confidence is the share of retained pixels
     assigned to that label; it is not a calibrated probability.
     """
+    mask = None
     if isinstance(image_path, Image.Image):
+        mask = image_path.info.get(FOREGROUND_MASK_KEY)
         image = ImageOps.exif_transpose(image_path).convert("RGB")
     else:
         with Image.open(image_path) as opened:
@@ -27,8 +35,11 @@ def estimate_garment_color(image_path: Image.Image | str | Path) -> dict[str, st
     image.thumbnail((128, 128))
 
     pixels = list(image.getdata())
-    foreground = _foreground_pixels(image)
-    if len(foreground) < max(20, int(len(pixels) * 0.04)):
+    foreground = _masked_pixels(image, mask) if mask is not None else []
+    minimum = max(20, int(len(pixels) * 0.04))
+    if len(foreground) < minimum:
+        foreground = _foreground_pixels(image)
+    if len(foreground) < minimum:
         foreground = pixels
 
     labeled_pixels = [(rgb, _color_name(rgb)) for rgb in foreground]
@@ -157,6 +168,18 @@ def _delta_e_76(
     return sqrt(sum((left - right) ** 2 for left, right in zip(first, second)))
 
 
+def _masked_pixels(image: Image.Image, mask: Image.Image) -> list[tuple[int, int, int]]:
+    """Keep the pixels that the background-removal mask marks as garment."""
+    if mask.size != image.size:
+        mask = mask.resize(image.size, Image.Resampling.BILINEAR)
+    # > 128 drops the soft edge, where garment and background colours are blended.
+    return [
+        pixel
+        for pixel, alpha in zip(image.getdata(), mask.convert("L").getdata())
+        if alpha > 128
+    ]
+
+
 def _foreground_pixels(image: Image.Image) -> list[tuple[int, int, int]]:
     width, height = image.size
     pixels = list(image.getdata())
@@ -214,12 +237,11 @@ def _color_name(rgb: tuple[int, int, int]) -> str:
     if high < 0.16:
         return "black"
     if saturation < 0.16:
-        if high > 0.9:
+        # No hue to speak of: the name depends on brightness only.
+        if high > 0.82:
             return "white"
-        if high > 0.68:
-            return "beige"
-        if high < 0.48:
-            return "brown"
+        if high < 0.28:
+            return "black"
         return "gray"
 
     if red >= green and red >= blue:
@@ -229,6 +251,17 @@ def _color_name(rgb: tuple[int, int, int]) -> str:
     else:
         hue = 60 * ((red - green) / delta + 4)
 
+    if 50 <= hue < 68 and saturation < 0.40 and high < 0.62:
+        return "green"  # olive, khaki
+    if 15 <= hue < 68 and saturation < 0.40:
+        # Pale warm tones (cream, nude, tan, camel) are not orange or yellow.
+        return "beige" if high >= 0.58 else "brown"
+    if (hue < 15 or hue >= 345) and saturation < 0.50:
+        # A washed-out red is pink when light and brown when dark.
+        if high >= 0.60:
+            return "pink"
+        if high < 0.45:
+            return "brown"
     if 8 <= hue < 40 and high < 0.58:
         return "brown"
     if hue < 15 or hue >= 345:

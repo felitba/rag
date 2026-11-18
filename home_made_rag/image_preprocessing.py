@@ -6,6 +6,8 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+from home_made_rag.color_metadata import FOREGROUND_MASK_KEY
+
 
 logger = logging.getLogger(__name__)
 
@@ -105,11 +107,15 @@ class ForegroundPreprocessor:
         padding = max(1, round(max(crop_width, crop_height) * self.padding_ratio))
         side = max(crop_width, crop_height) + 2 * padding
         background = Image.new("RGBA", (side, side), (*self.background_color, 255))
-        background.alpha_composite(
-            rgba,
-            ((side - crop_width) // 2, (side - crop_height) // 2),
-        )
-        return background.convert("RGB")
+        offset = ((side - crop_width) // 2, (side - crop_height) // 2)
+        background.alpha_composite(rgba, offset)
+        composed = background.convert("RGB")
+        # Keep the garment mask next to the image so the colour estimator counts
+        # only garment pixels instead of guessing the background again.
+        mask = Image.new("L", (side, side), 0)
+        mask.paste(rgba.getchannel("A"), offset)
+        composed.info[FOREGROUND_MASK_KEY] = mask
+        return composed
 
     @staticmethod
     def _parse_hex_color(value: str) -> tuple[int, int, int]:

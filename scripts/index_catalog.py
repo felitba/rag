@@ -8,12 +8,24 @@ from home_made_rag.catalog import Catalog
 from home_made_rag.chroma_db import ChromaDB
 from home_made_rag.config import CONFIG
 from home_made_rag.embedding import ClipEmbedding
+from home_made_rag.image_preprocessing import ForegroundPreprocessor
 
 def main():
     # load and validate catalog
     catalog = Catalog()
     catalog.validate_images()
-    enriched_colors = catalog.enrich_missing_colors()
+    # --recolor recomputes every colour; without it only missing ones are filled.
+    settings = CONFIG.get("image_preprocessing", {})
+    preprocessor = ForegroundPreprocessor(
+        enabled=settings.get("enabled", True),
+        model_name=settings.get("model_name", "u2net"),
+        max_side=settings.get("max_side", 1024),
+        background_color=settings.get("background_color", "#f1f0ec"),
+        padding_ratio=settings.get("padding_ratio", 0.10),
+    )
+    enriched_colors = catalog.enrich_missing_colors(
+        preprocessor=preprocessor, force="--recolor" in sys.argv
+    )
     item_ids = list(catalog.items)
     print(f"Catalog OK: {len(item_ids)} items, {len(catalog.outfits)} outfits")
     print(f"Estimated colors for {enriched_colors} garments")

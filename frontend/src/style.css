@@ -254,7 +254,7 @@ h3 { font-family: 'Playfair Display', serif; font-weight: 500; font-size: 23px; 
 .monitor-detail-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .monitor-request-id { color: var(--muted); font-size: 11px; }
 .monitor-tabs { display: flex; gap: 4px; margin: 18px 0 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
-.monitor-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; padding: 10px 12px; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
+.monitor-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); transition: color .2s ease, border-color .25s ease; font: inherit; font-size: 13px; font-weight: 600; padding: 10px 12px; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
 .monitor-tabs button:hover { color: var(--ink); }
 .monitor-tabs button.active { color: var(--ink); border-bottom-color: #2d382d; }
 .monitor-tabs button span { margin-left: 6px; font-size: 11px; font-weight: 500; background: #f1efe8; border-radius: 999px; padding: 1px 7px; }
@@ -327,6 +327,35 @@ h3 { font-family: 'Playfair Display', serif; font-weight: 500; font-size: 23px; 
 .monitor-row-dropped { opacity: .6; }
 .monitor-attempt { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; font-size: 12px; }
 .monitor-attempt p { margin: 0 0 6px; }
+
+/* ---------- Monitor: los tres recorridos ---------- */
+.monitor-routes-wrap { overflow-x: auto; }
+.monitor-routes { min-width: 720px; }
+.monitor-routes th, .monitor-routes td { width: 27%; line-height: 1.45; }
+.monitor-routes th:first-child, .monitor-routes td:first-child { width: 19%; }
+.monitor-routes th.current { color: var(--ink); font-weight: 700; background: #eef0e9; border-radius: 8px 8px 0 0; }
+.monitor-routes td.current { background: #f3f5ee; color: var(--ink); }
+.monitor-routes td:not(.current) { color: var(--muted); }
+.monitor-routes td:first-child { color: var(--ink); }
+.monitor-routes td.off { color: #a39d93; }
+.monitor-routes td.current.off { color: #87503e; }
+.monitor-route-mark { display: inline-block; width: 16px; color: var(--accent); }
+.monitor-routes td.off .monitor-route-mark { color: inherit; }
+.monitor-routes-legend { margin: 8px 0 10px; }
+
+/* ---------- Transiciones al cambiar de pestaña o de página ---------- */
+@keyframes panel-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.monitor-tab-panel { animation: panel-in .28s cubic-bezier(.2, .7, .2, 1) both; }
+.page-shell > main { animation: panel-in .32s cubic-bezier(.2, .7, .2, 1) both; }
+/* Entre Asistente, Catálogo y Monitor: fundido de la página (navegadores con View Transitions). */
+@view-transition { navigation: auto; }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .22s; animation-timing-function: ease; }
+/* La barra de navegación no se funde: queda fija mientras cambia el contenido. */
+.top-nav { view-transition-name: top-nav; }
+@media (prefers-reduced-motion: reduce) {
+  .monitor-tab-panel, .page-shell > main { animation: none; }
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+}
 
 @media (max-width: 740px) {
   .page-shell { width: min(100% - 28px, 560px); }

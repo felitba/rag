@@ -120,7 +120,7 @@ function Aggregates({ summary }) {
         <h2>Por tipo de entrada · 24 h</h2>
         <table className="monitor-table">
           <thead>
-            <tr><th>Entrada</th><th>Requests</th><th>Latencia p50</th><th>Latencia p95</th><th>Costo medio</th><th>Fallbacks</th></tr>
+            <tr><th>Entrada</th><th>Requests</th><th>Latencia p50</th><th>Latencia p95</th><th>Costo medio</th><th>Fallbacks</th><th>Reranking</th></tr>
           </thead>
           <tbody>
             {(summary.by_input_type_24h || []).map((row) => (
@@ -131,6 +131,7 @@ function Aggregates({ summary }) {
                 <td>{formatSeconds(row.p95_latency_ms)}</td>
                 <td>{formatMoney(row.avg_cost_usd)}</td>
                 <td>{formatNumber(row.fallbacks)}</td>
+                <td>{row.input_type === "text" ? "sin efecto (solo coseno)" : "híbrido"}</td>
               </tr>
             ))}
           </tbody>
@@ -158,6 +159,115 @@ function StageTimings({ detail }) {
       <h3>Tiempo por etapa</h3>
       <p className="monitor-muted">Total {formatSeconds(detail.duration_ms)}.</p>
       <SegmentBar segments={stageSegments(detail.stage_timings, detail.duration_ms)} format={formatStage} />
+    </section>
+  );
+}
+
+// Los tres recorridos posibles según lo que mande la persona. "null" = el paso no corre.
+const ROUTES = [
+  { key: "image", label: "Solo foto" },
+  { key: "image+text", label: "Foto + texto" },
+  { key: "text", label: "Solo texto" },
+];
+
+function routeSteps(config) {
+  const topK = config?.top_k ?? "top_k";
+  const weights = config?.rerank_weights;
+  const hybrid = weights
+    ? `coseno ${weights.cosine_similarity} + color ${weights.color} + categoría ${weights.category}`
+    : "coseno + color + categoría";
+  const mix = config ? `foto ${config.photo_weight} + texto ${config.text_weight}` : "foto + texto";
+  return [
+    { step: "Quitar fondo de la foto", image: "sí", "image+text": "sí", text: null },
+    { step: "Embedding de la consulta", image: "CLIP de imagen", "image+text": "CLIP de imagen; el texto se embebe aparte", text: "CLIP de texto, uno por query" },
+    { step: "Atributos de la foto", image: "categoría + color", "image+text": "categoría + color", text: null },
+    { step: "Query rewriting (LLM)", image: null, "image+text": "sí; no repite la prenda de la foto", text: "sí; corta si el pedido no es de ropa" },
+    { step: "Retrieval", image: `${topK} prendas por la foto`, "image+text": `${topK} prendas por la foto; el texto no busca`, text: `${topK} por query, con filtro de categoría si la query la nombra; se unen` },
+    { step: "Reranking híbrido", image: hybrid, "image+text": hybrid, text: "sin efecto: no hay atributos, queda solo el coseno", textMuted: true },
+    { step: "Context precision (proxy)", image: "se calcula", "image+text": "se calcula", text: null },
+    { step: "Orden de outfits", image: "puntaje de la mejor prenda", "image+text": `${mix}, reescalados 0–1`, text: "cobertura de las queries" },
+    { step: "Generación (LLM)", image: "sin pedido de texto", "image+text": "con el pedido del usuario", text: "con el pedido del usuario" },
+    { step: "Validación de la salida", image: "sí", "image+text": "sí", text: "sí" },
+  ];
+}
+
+// Qué componentes del reranking pesaron de verdad en esta request.
+function rerankStatus(detail) {
+  const attributes = detail.query_attributes;
+  const parts = ["coseno"];
+  if (attributes?.color?.color) parts.push("color");
+  if (attributes?.category?.label) parts.push("categoría");
+  return parts.length === 1
+    ? { active: false, label: "Reranking sin efecto (solo coseno)" }
+    : { active: true, label: `Reranking híbrido: ${parts.join(" + ")}` };
+}
+
+// Lo que en esta request se apartó del recorrido normal de su columna.
+function routeDeviations(detail) {
+  const config = detail.pipeline_trace?.config;
+  const attributes = detail.query_attributes;
+  const rewriting = detail.query_rewriting;
+  const attempts = detail.pipeline_trace?.generation?.attempts || [];
+  return [
+    config && !config.image_preprocessing && detail.input_type !== "text" && "Quitar fondo estaba desactivado: se usó la foto original.",
+    attributes && !attributes.category?.label && `La categoría de la foto fue dudosa (${attributes.category?.best_label || "sin candidata"}): el reranking usó coseno + color, sin categoría.`,
+    config && !config.category_classifier && detail.input_type !== "text" && "El clasificador de categoría estaba desactivado: el reranking no tuvo componente de categoría.",
+    rewriting && !rewriting.in_scope && "El texto no era un pedido de ropa: se respondió con el mensaje fijo y no se buscó en el catálogo.",
+    rewriting && rewriting.in_scope && rewriting.source !== "rewritten" && "La reescritura falló o estaba apagada: se buscó con el texto original.",
+    config && !config.generator && "El generador estaba desactivado: se devolvieron los outfits recuperados.",
+    attempts.length > 1 && `El generador probó ${attempts.length} proveedores (cadena de fallback).`,
+    detail.generation_status === "fallback" && "La generación no dio looks válidos: se devolvieron los outfits recuperados.",
+  ].filter(Boolean);
+}
+
+function PipelineRoutes({ detail }) {
+  const config = detail.pipeline_trace?.config;
+  const steps = routeSteps(config);
+  const deviations = routeDeviations(detail);
+  const status = rerankStatus(detail);
+  return (
+    <section className="monitor-pipeline">
+      <h3>Qué recorrido hizo esta request</h3>
+      <p className="monitor-muted">
+        Hay tres recorridos según la entrada. La columna resaltada es el de esta request ({INPUT_LABELS[detail.input_type] || "sin dato"}); las otras dos muestran qué habría cambiado. {status.label}.
+      </p>
+      <div className="monitor-routes-wrap">
+        <table className="monitor-table monitor-routes">
+          <thead>
+            <tr>
+              <th>Paso</th>
+              {ROUTES.map((route) => (
+                <th key={route.key} className={route.key === detail.input_type ? "current" : ""}>
+                  {route.label}{route.key === detail.input_type ? " · esta request" : ""}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {steps.map((row) => (
+              <tr key={row.step}>
+                <td><strong>{row.step}</strong></td>
+                {ROUTES.map((route) => {
+                  const value = row[route.key];
+                  const off = value === null || (route.key === "text" && row.textMuted);
+                  return (
+                    <td key={route.key} className={`${route.key === detail.input_type ? "current" : ""} ${off ? "off" : ""}`}>
+                      <span className="monitor-route-mark" aria-hidden="true">{value === null ? "○" : off ? "◐" : "●"}</span>
+                      {value === null ? "no corre" : value}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="monitor-muted monitor-routes-legend">● corre · ◐ corre pero no cambia el resultado · ○ no corre</p>
+      {deviations.length > 0 && (
+        <ul className="monitor-explain">
+          {deviations.map((note) => <li key={note}><strong>En esta request:</strong> {note}</li>)}
+        </ul>
+      )}
     </section>
   );
 }
@@ -907,6 +1017,9 @@ export default function MonitoringDashboard() {
                     <span className="monitor-chip">{formatMoney(detail.estimated_cost_usd)}</span>
                     <span className="monitor-chip">{formatNumber(detail.input_tokens)} + {formatNumber(detail.output_tokens)} tokens</span>
                     {detail.llm_model && <span className="monitor-chip">{formatNumber(detail.llm_calls)} × {detail.llm_model}</span>}
+                    {detail.reranked_count > 0 && (
+                      <span className={`monitor-chip ${rerankStatus(detail).active ? "status-generated" : ""}`}>{rerankStatus(detail).label}</span>
+                    )}
                     {detail.context_precision_available ? (
                       <span className="monitor-chip">CP proxy {formatPercent(detail.retrieved_context_precision)} → {formatPercent(detail.reranked_context_precision)}</span>
                     ) : null}
@@ -930,9 +1043,12 @@ export default function MonitoringDashboard() {
                 ))}
               </div>
 
+              {/* La key cambia con la pestaña y la request: React vuelve a montar el panel y corre la animación. */}
+              <div className="monitor-tab-panel" role="tabpanel" key={`${detail.request_id}-${activeTab}`}>
               {activeTab === "summary" && (
                 <>
                   <StageTimings detail={detail} />
+                  <PipelineRoutes detail={detail} />
                   <PipelineSteps detail={detail} />
                   <ConfigUsed config={detail.pipeline_trace?.config} />
                   {(detail.llm_credential_source || detail.llm_credential_fingerprint) && (
@@ -1030,6 +1146,7 @@ export default function MonitoringDashboard() {
                   </div>
                 </section>
               )}
+              </div>
             </>
           )}
         </section>

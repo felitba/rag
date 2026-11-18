@@ -88,19 +88,27 @@ class Catalog:
             if not path.is_file():
                 raise FileNotFoundError(f"No existe la imagen de la prenda {item_id}: {path}")
 
-    def enrich_missing_colors(self, persist: bool = True) -> int:
-        """Estimate and persist missing dominant-color features for catalog rows."""
+    def enrich_missing_colors(self, persist: bool = True, preprocessor=None, force: bool = False) -> int:
+        """Estimate and persist dominant-color features for catalog rows.
+
+        With a preprocessor, the background is removed first, exactly as for a
+        query photo. force=True recomputes rows that already have a colour.
+        """
+        color_keys = ("color", "color_r", "color_g", "color_b")
         enriched = 0
         for item_id, item in self.items.items():
-            if all(item.get(key) is not None for key in ("color", "color_r", "color_g", "color_b")):
+            if not force and all(item.get(key) is not None for key in color_keys):
                 continue
-            estimated = estimate_garment_color(self.image_path(item_id))
+            image = self.image_path(item_id)
+            if preprocessor is not None:
+                image = preprocessor.process(image)
+            estimated = estimate_garment_color(image)
             for key, value in estimated.items():
-                if key.startswith("color_") and key in {"color_r", "color_g", "color_b"}:
-                    item[key] = value
-                elif not item.get(key):
+                if force or key in color_keys[1:] or not item.get(key):
                     item[key] = value
             enriched += 1
+            if enriched % 250 == 0:
+                print(f"  colours: {enriched} garments", flush=True)
 
         if enriched and persist:
             with ITEMS_FILE.open("w", encoding="utf-8") as file:
