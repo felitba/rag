@@ -6,6 +6,11 @@
     "log_level": "DEBUG",
     "log_file": "logs/fashion_rag.log"
   },
+  "store": {
+    "name": "Polyvore",
+    "url": "https://huggingface.co/datasets/mvasil/polyvore-outfits",
+    "about": "Outfits armados por la comunidad de Polyvore, un sitio de moda que cerró en 2018. Usamos una muestra del dataset público Polyvore Outfits."
+  },
   "dataset": {
     "huggingface_id": "mvasil/polyvore-outfits",
     "configuration": "nondisjoint",
@@ -108,6 +113,8 @@
     "top_n_outfits": 10,
     "max_generated_outfits": 3,
     "timeout_seconds": 25,
+    "use_images": false,
+    "max_images": 60,
     "input_usd_per_million_tokens": 0.4,
     "cached_input_usd_per_million_tokens": 0.1,
     "output_usd_per_million_tokens": 1.6

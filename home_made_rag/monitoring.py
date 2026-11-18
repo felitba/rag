@@ -53,6 +53,8 @@ class MonitoringService:
                     input_type TEXT,
                     query_attributes_json TEXT,
                     query_rewriting_json TEXT,
+                    stage_timings_json TEXT,
+                    pipeline_trace_json TEXT,
                     status_code INTEGER,
                     duration_ms REAL,
                     generation_status TEXT,
@@ -100,6 +102,10 @@ class MonitoringService:
                 db.execute("ALTER TABLE requests ADD COLUMN query_attributes_json TEXT")
             if "query_rewriting_json" not in columns:
                 db.execute("ALTER TABLE requests ADD COLUMN query_rewriting_json TEXT")
+            if "pipeline_trace_json" not in columns:
+                db.execute("ALTER TABLE requests ADD COLUMN pipeline_trace_json TEXT")
+            if "stage_timings_json" not in columns:
+                db.execute("ALTER TABLE requests ADD COLUMN stage_timings_json TEXT")
             if "llm_model" not in columns:
                 db.execute("ALTER TABLE requests ADD COLUMN llm_model TEXT")
             if "llm_credential_source" not in columns:
@@ -199,6 +205,24 @@ class MonitoringService:
             db.execute(
                 "UPDATE requests SET query_rewriting_json = ? WHERE request_id = ?",
                 (json.dumps(rewriting, ensure_ascii=False), request_id),
+            )
+
+    def set_stage_timings(self, request_id: str, timings: dict[str, float]) -> None:
+        if not request_id or not timings:
+            return
+        with self._connect() as db:
+            db.execute(
+                "UPDATE requests SET stage_timings_json = ? WHERE request_id = ?",
+                (json.dumps(timings), request_id),
+            )
+
+    def set_pipeline_trace(self, request_id: str, trace: dict[str, Any]) -> None:
+        if not request_id or not trace:
+            return
+        with self._connect() as db:
+            db.execute(
+                "UPDATE requests SET pipeline_trace_json = ? WHERE request_id = ?",
+                (json.dumps(trace, ensure_ascii=False), request_id),
             )
 
     def set_generation_status(self, request_id: str, status: str) -> None:
@@ -326,6 +350,9 @@ class MonitoringService:
                 "name": outfit.get("name"),
                 "description": outfit.get("description"),
                 "explanation": outfit.get("explanation"),
+                "changes_from_source": outfit.get("changes_from_source"),
+                "look_kind": outfit.get("look_kind"),
+                "omitted_garment_ids": [item["garment_id"] for item in outfit.get("omitted_items", [])],
                 "style_tags": outfit.get("style_tags", []),
                 "source_outfits": outfit.get("source_outfits", []),
                 "matched_garment_ids": outfit.get("matched_garment_ids", []),
@@ -452,6 +479,82 @@ class MonitoringService:
             "total_tokens": lifetime["total_tokens"] or 0,
             "total_estimated_cost_usd": lifetime["total_estimated_cost_usd"] or 0,
             "credential_usage_24h": self._credential_usage(since),
+            **self._quality_summary(since),
+        }
+
+    @staticmethod
+    def _percentile(values: list[float], fraction: float) -> float | None:
+        """Nearest-rank percentile: the value below which `fraction` of the data falls."""
+        if not values:
+            return None
+        ordered = sorted(values)
+        return ordered[min(len(ordered) - 1, int(fraction * len(ordered)))]
+
+    def _quality_summary(self, since: str) -> dict[str, Any]:
+        """Aggregates for the slides: outcome rates, latency percentiles, cost and proxy precision."""
+        with self._connect() as db:
+            rows = [dict(row) for row in db.execute(
+                """SELECT input_type, generation_status, duration_ms, estimated_cost_usd,
+                          llm_calls, context_precision_available, retrieved_context_precision,
+                          reranked_context_precision, stage_timings_json
+                   FROM requests
+                   WHERE started_at >= ? AND status_code = 200 AND duration_ms IS NOT NULL""",
+                (since,),
+            ).fetchall()]
+
+        def mean(values):
+            return sum(values) / len(values) if values else None
+
+        durations = [row["duration_ms"] for row in rows]
+        statuses: dict[str, int] = {}
+        for row in rows:
+            status = row["generation_status"] or "sin estado"
+            statuses[status] = statuses.get(status, 0) + 1
+
+        by_input = []
+        for input_type in sorted({row["input_type"] or "desconocido" for row in rows}):
+            group = [row for row in rows if (row["input_type"] or "desconocido") == input_type]
+            group_durations = [row["duration_ms"] for row in group]
+            by_input.append({
+                "input_type": input_type,
+                "requests": len(group),
+                "p50_latency_ms": self._percentile(group_durations, 0.5),
+                "p95_latency_ms": self._percentile(group_durations, 0.95),
+                "avg_cost_usd": mean([row["estimated_cost_usd"] for row in group]),
+                "fallbacks": sum(1 for row in group if row["generation_status"] == "fallback"),
+            })
+
+        with_precision = [row for row in rows if row["context_precision_available"]]
+        stage_totals: dict[str, float] = {}
+        timed_requests = 0
+        for row in rows:
+            if not row["stage_timings_json"]:
+                continue
+            timed_requests += 1
+            for stage, milliseconds in json.loads(row["stage_timings_json"]).items():
+                stage_totals[stage] = stage_totals.get(stage, 0.0) + milliseconds
+
+        return {
+            "ok_requests_24h": len(rows),
+            "p50_latency_ms_24h": self._percentile(durations, 0.5),
+            "p95_latency_ms_24h": self._percentile(durations, 0.95),
+            "generation_status_24h": [
+                {"status": status, "requests": count}
+                for status, count in sorted(statuses.items(), key=lambda pair: -pair[1])
+            ],
+            "avg_cost_per_request_usd_24h": mean([row["estimated_cost_usd"] for row in rows]),
+            "context_precision_requests_24h": len(with_precision),
+            "avg_retrieved_context_precision_24h": mean(
+                [row["retrieved_context_precision"] for row in with_precision]
+            ),
+            "avg_reranked_context_precision_24h": mean(
+                [row["reranked_context_precision"] for row in with_precision]
+            ),
+            "by_input_type_24h": by_input,
+            "stage_timing_requests_24h": timed_requests,
+            "avg_stage_timings_ms_24h": {
+                stage: round(total / timed_requests, 1) for stage, total in stage_totals.items()
+            },
         }
 
     def _credential_usage(self, since: str) -> list[dict[str, Any]]:
@@ -495,7 +598,10 @@ class MonitoringService:
             rows = db.execute(
                 "SELECT * FROM requests ORDER BY started_at DESC LIMIT ?", (limit,)
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [
+            {key: value for key, value in dict(row).items() if key != "pipeline_trace_json"}
+            for row in rows
+        ]
 
     def get_request(self, request_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
@@ -515,6 +621,10 @@ class MonitoringService:
         raw_attributes = result.pop("query_attributes_json", None)
         raw_precision_criteria = result.pop("context_precision_criteria_json", None)
         raw_rewriting = result.pop("query_rewriting_json", None)
+        raw_trace = result.pop("pipeline_trace_json", None)
+        result["pipeline_trace"] = json.loads(raw_trace) if raw_trace else None
+        raw_timings = result.pop("stage_timings_json", None)
+        result["stage_timings"] = json.loads(raw_timings) if raw_timings else None
         result["query_rewriting"] = json.loads(raw_rewriting) if raw_rewriting else None
         result["query_attributes"] = json.loads(raw_attributes) if raw_attributes else None
         result["context_precision_criteria"] = json.loads(raw_precision_criteria) if raw_precision_criteria else []

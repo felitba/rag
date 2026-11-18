@@ -1,5 +1,8 @@
 import json
 import logging
+import time
+from contextlib import contextmanager
+
 import numpy as np
 
 
@@ -18,6 +21,18 @@ OUT_OF_SCOPE_MESSAGE = (
 
 class OutOfScopeRequest(Exception):
     """The user's text is not a request about clothing."""
+
+
+@contextmanager
+def timed(timings, stage):
+    """Add the milliseconds spent inside the `with` block to timings[stage]."""
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        if timings is not None:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            timings[stage] = round(timings.get(stage, 0.0) + elapsed_ms, 1)
 
 
 class RAG:
@@ -130,36 +145,44 @@ class RAG:
         return_query_attributes=False,
         request_id=None,
         context_precision_result=None,
+        timings=None,
+        trace=None,
     ):
         if image_path is not None:
-            query_image = (
-                self.image_preprocessor.process(image_path)
-                if self.image_preprocessor is not None
-                else image_path
-            )
+            with timed(timings, "preprocessing"):
+                query_image = (
+                    self.image_preprocessor.process(image_path)
+                    if self.image_preprocessor is not None
+                    else image_path
+                )
             if self.monitor and request_id:
                 try:
                     self.monitor.record_query_images(request_id, image_path, query_image)
                 except Exception:
                     logger.exception("Could not save query images for monitoring")
-            query_embedding = self.embedding.embed_image(query_image)
-            matches = self._search(query_embedding, CONFIG["vector_store"]["top_k"])
+            with timed(timings, "embedding"):
+                query_embedding = self.embedding.embed_image(query_image)
+            with timed(timings, "retrieval"):
+                matches = self._search(query_embedding, CONFIG["vector_store"]["top_k"])
             if query_attributes is None:
-                query_attributes = self.classify_query_image(query_image)
+                with timed(timings, "attributes"):
+                    query_attributes = self.classify_query_image(query_image)
         elif not text:
             raise ValueError("Se necesita una imagen o un texto para recomendar")
         
         text_queries, rewriting_trace = [], None
         if text:
             owned_category = ((query_attributes or {}).get("category") or {}).get("label")
-            text_queries, rewriting_trace = self._rewrite(
-                text, owned_category, request_id, has_photo=image_path is not None,
-            )
+            with timed(timings, "rewriting"):
+                text_queries, rewriting_trace = self._rewrite(
+                    text, owned_category, request_id, has_photo=image_path is not None,
+                )
             if image_path is None:
                 if not text_queries:
                     self._record_rewriting(request_id, rewriting_trace, text_queries, [])
                     raise OutOfScopeRequest(text)
-                matches = self._search_text(text_queries)
+                with timed(timings, "retrieval"):
+                    matches = self._search_text(text_queries)
 
         retrieved_precision = evaluate_context_precision(matches, query_attributes, self.catalog)
         matches = retrieved_precision["annotated_matches"]
@@ -168,7 +191,8 @@ class RAG:
                 self.monitor.record_candidates(request_id, "retrieved", matches, self.catalog)
             except Exception:
                 logger.exception("Could not record pre-reranking candidates")
-        matches = self.hybrid_reranker.rerank(matches, query_attributes)
+        with timed(timings, "rerank"):
+            matches = self.hybrid_reranker.rerank(matches, query_attributes)
         reranked_precision = evaluate_context_precision(matches, query_attributes, self.catalog)
         matches = reranked_precision["annotated_matches"]
         context_metrics = {
@@ -194,11 +218,18 @@ class RAG:
                 logger.exception("Could not record post-reranking candidates")
         
         limit = max_outfits if max_outfits is not None else CONFIG["retrieval"]["max_outfits"]
-        if text_queries:
-            candidates = self._collect_outfits(matches, None)
-            outfits = self._rank_by_text(candidates, text_queries, has_photo=image_path is not None)[:limit]
-        else:
-            outfits = self._collect_outfits(matches, limit)
+        with timed(timings, "outfits"):
+            if text_queries:
+                candidates = self._collect_outfits(matches, None)
+                outfits = self._rank_by_text(candidates, text_queries, has_photo=image_path is not None)[:limit]
+            else:
+                candidates = self._collect_outfits(matches, None)
+                outfits = candidates[:limit]
+        if trace is not None:
+            trace["outfit_hop"] = self._outfit_hop_trace(
+                candidates, outfits, limit,
+                has_text=bool(text_queries), has_photo=image_path is not None,
+            )
         if rewriting_trace is not None:
             self._record_rewriting(request_id, rewriting_trace, text_queries, outfits)
         if return_query_attributes:
@@ -206,6 +237,81 @@ class RAG:
         return outfits
 
     def recommend_with_generation(self, image_path=None, text=None, query_attributes=None, request_id=None):
+        """Run the whole pipeline and save how long each stage took, even if it fails."""
+        timings = {}
+        # Everything the monitor needs to explain this request: the settings it ran
+        # with, how garments became outfits, and what the generator proposed.
+        trace = {"config": self._config_snapshot()}
+        try:
+            return self._recommend_with_generation(image_path, text, query_attributes, request_id, timings, trace)
+        finally:
+            if self.monitor and request_id:
+                try:
+                    self.monitor.set_stage_timings(request_id, timings)
+                    self.monitor.set_pipeline_trace(request_id, trace)
+                except Exception:
+                    logger.exception("Could not record stage timings or pipeline trace")
+
+    def _config_snapshot(self):
+        """The settings that shape a result, saved per request so runs can be compared."""
+        generator = CONFIG.get("generator", {})
+        rewriting = CONFIG.get("query_rewriting", {})
+        reranker = self.hybrid_reranker
+        return {
+            "image_preprocessing": bool(self.image_preprocessor is not None and getattr(self.image_preprocessor, "enabled", True)),
+            "category_classifier": self.attribute_classifier is not None,
+            "query_rewriting": self.rewriter is not None,
+            "category_filter": bool(rewriting.get("category_filter", True)),
+            "photo_weight": rewriting.get("photo_weight", 0.5),
+            "text_weight": rewriting.get("text_weight", 0.5),
+            "top_k": CONFIG["vector_store"]["top_k"],
+            "max_outfits": CONFIG["retrieval"]["max_outfits"],
+            "rerank_weights": dict(reranker.weights),
+            "color_tone_weight": reranker.color_tone_weight,
+            "color_coverage_weight": reranker.color_coverage_weight,
+            "color_delta_e_scale": reranker.color_delta_e_scale,
+            "context_precision_color_threshold": CONFIG.get("context_precision", {}).get("color_similarity_threshold"),
+            "generator": bool(generator.get("enabled", False)) and self.generator is not None,
+            "generator_model": getattr(self.generator, "model", None) or generator.get("model"),
+            "top_n_outfits": generator.get("top_n_outfits"),
+            "max_generated_outfits": generator.get("max_generated_outfits"),
+            "generator_uses_images": bool(generator.get("use_images", False)),
+        }
+
+    @staticmethod
+    def _outfit_hop_trace(candidates, kept, limit, has_text, has_photo):
+        """How retrieved garments turned into the outfits passed on."""
+        if has_text and has_photo:
+            rule = "photo_and_text"
+        elif has_text:
+            rule = "text_coverage"
+        else:
+            rule = "first_match"
+        kept_ids = {outfit["outfit_id"] for outfit in kept}
+        return {
+            "rule": rule,
+            "outfits_found": len(candidates),
+            "outfits_kept": len(kept),
+            "limit": limit,
+            "outfits": [
+                {
+                    "outfit_id": outfit["outfit_id"],
+                    "kept": outfit["outfit_id"] in kept_ids,
+                    "score": outfit.get("score"),
+                    "photo_score": outfit.get("photo_score"),
+                    "text_score": outfit.get("text_score"),
+                    "garment_count": len(outfit.get("items", [])),
+                    "matches": outfit.get("match_details", []),
+                }
+                # Kept outfits first, in their final order; then the best ones left out.
+                for outfit in [*kept, *sorted(
+                    (o for o in candidates if o["outfit_id"] not in kept_ids),
+                    key=lambda o: o.get("score") or 0, reverse=True,
+                )[:10]]
+            ],
+        }
+
+    def _recommend_with_generation(self, image_path, text, query_attributes, request_id, timings, trace):
         """Run retrieval once, then generate catalog-grounded suggestions when available."""
         settings = CONFIG.get("generator", {})
         enabled = bool(settings.get("enabled", False))
@@ -224,6 +330,8 @@ class RAG:
                 return_query_attributes=True,
                 request_id=request_id,
                 context_precision_result=context_precision,
+                timings=timings,
+                trace=trace,
             )
         except OutOfScopeRequest:
             return [], OUT_OF_SCOPE_MESSAGE, "out_of_scope", [], None, context_precision
@@ -241,21 +349,28 @@ class RAG:
 
         try:
             resolved_recommendations = []
+            attempts = trace.setdefault("generation", {"attempts": []})["attempts"]
 
             def validate_generated_output(generated):
+                # Attach the verdicts to the provider attempt that produced these drafts.
+                drafts = []
+                if attempts:
+                    attempts[-1]["drafts"] = drafts
                 if not generated.get("outfits"):
                     raise ValueError("El proveedor no propuso outfits utilizables")
-                resolved = self._resolve_generated(generated, retrieved)
+                resolved = self._resolve_generated(generated, retrieved, report=drafts)
                 if not resolved:
                     raise ValueError("El proveedor no devolvió combinaciones válidas")
                 resolved_recommendations.extend(resolved)
 
-            generated = self.generator.generate(
-                retrieved,
-                prompt=text,
-                request_id=request_id,
-                validate_output=validate_generated_output,
-            )
+            with timed(timings, "generation"):
+                generated = self.generator.generate(
+                    retrieved,
+                    prompt=text,
+                    request_id=request_id,
+                    validate_output=validate_generated_output,
+                    attempt_log=attempts,
+                )
             recommendations = resolved_recommendations
             self._record_generator_outfits(request_id, "generator_output", recommendations)
             explanation = generated.get("explanation") or "Sugerencias nuevas basadas en prendas de los outfits recuperados."
@@ -273,7 +388,7 @@ class RAG:
         except Exception:
             logger.exception("Could not record %s outfits for monitoring", stage)
 
-    def _resolve_generated(self, generated, candidates):
+    def _resolve_generated(self, generated, candidates, report=None):
         candidate_outfits = {outfit["outfit_id"]: outfit for outfit in candidates}
         candidate_items = {
             item["garment_id"]: item
@@ -284,10 +399,41 @@ class RAG:
             outfit_id: {item["garment_id"] for item in outfit["items"]}
             for outfit_id, outfit in candidate_outfits.items()
         }
+        # Garments that retrieval matched to the query, in any retrieved outfit.
+        query_matched_ids = {
+            garment_id
+            for outfit in candidates
+            for garment_id in outfit.get("matched_garment_ids", [])
+        }
         resolved = []
         for draft in generated.get("outfits", [])[: self.generator.max_generated_outfits]:
             garment_ids = draft.get("garment_ids", [])
             source_ids = draft.get("source_outfit_ids", [])
+            # One line per draft for the monitor: what the model proposed and the verdict.
+            verdict = {
+                "name": draft.get("name"),
+                "garment_ids": garment_ids if isinstance(garment_ids, list) else [],
+                "cited_source_outfits": source_ids if isinstance(source_ids, list) else [],
+                "accepted": False,
+                "reason": None,
+            }
+            if report is not None:
+                report.append(verdict)
+            if isinstance(garment_ids, list) and isinstance(source_ids, list):
+                # The sources follow from the garments, so they are computed, not trusted:
+                # keep the model's valid citations (in order, no repeats) and add the
+                # retrieved outfit of any garment they leave uncovered.
+                cited = [oid for oid in dict.fromkeys(source_ids) if oid in candidate_outfits]
+                covered = set().union(*(source_item_ids[oid] for oid in cited))
+                for item_id in garment_ids:
+                    if item_id in covered:
+                        continue
+                    for oid, items in source_item_ids.items():
+                        if item_id in items:
+                            cited.append(oid)
+                            covered |= items
+                            break
+                source_ids = cited
             rejection_reason = None
             if not isinstance(garment_ids, list):
                 rejection_reason = "garment_ids_not_list"
@@ -307,6 +453,7 @@ class RAG:
                 rejection_reason = "source_outfit_id_outside_candidates"
             if rejection_reason:
                 logger.warning("Discarding generated outfit reason=%s", rejection_reason)
+                verdict["reason"] = rejection_reason
                 continue
 
             cited_item_ids = set().union(*(source_item_ids[outfit_id] for outfit_id in source_ids))
@@ -314,18 +461,20 @@ class RAG:
             matching_existing_outfits = [
                 outfit_id
                 for outfit_id, items in source_item_ids.items()
-                if selected == items
+                if selected <= items  # the whole outfit or a trimmed version of it
             ]
             is_existing_outfit = bool(matching_existing_outfits)
             if not selected.issubset(cited_item_ids):
                 logger.warning(
                     "Discarding generated outfit reason=garment_not_in_cited_source_outfit"
                 )
+                verdict["reason"] = "garment_not_in_cited_source_outfit"
                 continue
             if not is_existing_outfit and len(set(source_ids)) < 2:
                 logger.warning(
                     "Discarding generated outfit reason=fewer_than_two_source_outfits_for_new_combination"
                 )
+                verdict["reason"] = "fewer_than_two_source_outfits_for_new_combination"
                 continue
             contributing_sources = []
             for outfit_id in source_ids:
@@ -343,11 +492,13 @@ class RAG:
                 logger.warning(
                     "Discarding generated outfit reason=no_contributing_source_outfits"
                 )
+                verdict["reason"] = "no_contributing_source_outfits"
                 continue
             if not is_existing_outfit and len(contributing_sources) < 2:
                 logger.warning(
                     "Discarding generated outfit that does not combine garments from at least two source outfits"
                 )
+                verdict["reason"] = "fewer_than_two_contributing_source_outfits"
                 continue
             if is_existing_outfit:
                 resolved_sources = [oid for oid in matching_existing_outfits if oid in source_ids]
@@ -356,6 +507,27 @@ class RAG:
             else:
                 resolved_sources = contributing_sources
 
+            # What changed against the real outfit is a fact, so it is computed here
+            # instead of taken from the model's own account (changes_from_source).
+            omitted_items = []
+            if not is_existing_outfit:
+                look_kind = "mix"
+            elif selected == source_item_ids[resolved_sources[0]]:
+                look_kind = "existing"
+            else:
+                look_kind = "trimmed"
+                omitted_items = [
+                    {
+                        "garment_id": item["garment_id"],
+                        "category": item.get("category"),
+                        "color": item.get("color"),
+                        "image_url": item.get("image_url"),
+                    }
+                    for item in candidate_outfits[resolved_sources[0]]["items"]
+                    if item["garment_id"] not in selected
+                ]
+
+            verdict.update(accepted=True, look_kind=look_kind, source_outfits=resolved_sources)
             # Garments may recur across different generated looks; only duplicates
             # within this one look are rejected above.
             resolved.append({
@@ -363,11 +535,14 @@ class RAG:
                 "name": draft.get("name") or f"Look {len(resolved) + 1}",
                 "description": draft.get("description") or "",
                 "explanation": draft.get("explanation") or "",
+                "changes_from_source": draft.get("changes_from_source") or "",
+                "look_kind": look_kind,
+                "omitted_items": omitted_items,
                 "style_tags": draft.get("style_tags", []),
                 "source_outfits": resolved_sources,
                 "generated": True,
                 "score": None,
-                "matched_garment_ids": [],
+                "matched_garment_ids": [item_id for item_id in garment_ids if item_id in query_matched_ids],
                 "items": [candidate_items[item_id] for item_id in garment_ids],
             })
         return resolved
@@ -542,18 +717,29 @@ class RAG:
         if CONFIG["retrieval"]["exclude_query_item"]:
             matches = [match for match in matches if match["distance"] > 1e-4]
 
+        # Position of each garment in the reranked list, before any filtering.
+        ranks = {match["item_id"]: rank for rank, match in enumerate(matches, start=1)}
         found = {}
         for match in matches:
             for outfit_id in match["outfit_ids"]:
+                score = match.get("rerank_score", 1 - match["distance"])
                 if outfit_id not in found:
-                    score = match.get("rerank_score", 1 - match["distance"])
                     found[outfit_id] = {
                         "outfit_id": outfit_id,
                         "score": round(score, 6),
                         "matched_garment_ids": [],
+                        "match_details": [],
                     }
                 if match["item_id"] not in found[outfit_id]["matched_garment_ids"]:
                     found[outfit_id]["matched_garment_ids"].append(match["item_id"])
+                    found[outfit_id]["match_details"].append({
+                        "garment_id": match["item_id"],
+                        "rank": ranks[match["item_id"]],
+                        "score": round(score, 6),
+                        "cosine_similarity": round(1 - match["distance"], 6),
+                        "category": match.get("category"),
+                        "image_url": self.catalog.image_url(match["item_id"]),
+                    })
 
         outfits = list(found.values())[:max_outfits]
 

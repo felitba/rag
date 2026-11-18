@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from home_made_rag.catalog import Catalog
+from home_made_rag.catalog_stats import build_catalog_info
 from home_made_rag.chroma_db import ChromaDB
 from home_made_rag.config import CONFIG, IMAGES_DIR, MONITORING_DB
 from home_made_rag.embedding import ClipEmbedding
@@ -128,6 +129,8 @@ async def lifespan(app: FastAPI):
                 monitor=monitor,
                 credential_source=credential_name,
                 fallbacks=fallback_providers,
+                use_images=generator_settings.get("use_images", False),
+                max_images=generator_settings.get("max_images", 30),
             )
             provider_order = ", ".join(
                 f"{provider['name']}:{provider['model']}" for provider in generator.providers
@@ -165,6 +168,12 @@ async def lifespan(app: FastAPI):
         rewriter=rewriter
     )
     app.state.monitor = monitor
+    try:
+        indexed_ids = chroma.collection.get(include=[])["ids"]
+        app.state.catalog_info = build_catalog_info(catalog, indexed_ids)
+    except Exception:
+        logger.exception("Could not compute catalog statistics")
+        app.state.catalog_info = None
     logger.info("Ready. Indexed garments: %d", chroma.count())
     
     yield
@@ -226,6 +235,15 @@ app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images") #  makes 
 @app.get("/health")
 def health(request: Request):
     return {"status": "ok", "indexed_garments": request.app.state.rag.chroma.count()}
+
+
+@app.get("/api/catalog")
+def catalog_info(request: Request):
+    """Store identity and statistics of the searchable catalog (computed once at startup)."""
+    info = getattr(request.app.state, "catalog_info", None)
+    if info is None:
+        raise HTTPException(status_code=503, detail="Catalog statistics are not available")
+    return info
 
 
 @app.get("/api/monitor/summary")
