@@ -23,7 +23,9 @@ function OutfitCards({ outfits, emptyMessage }) {
               <p className="eyebrow">LOOK {String(index + 1).padStart(2, "0")}</p>
               <h3>{outfit.name || outfit.outfit_id.replaceAll("_", " ")}</h3>
             </div>
-            <span className="outfit-tag">{outfit.generated ? "Nueva combinación" : "Del catálogo"}</span>
+            <span className="outfit-tag">
+              {outfit.generated ? "Nueva combinación" : (outfit.is_existing_outfit ? "Outfit existente" : "Del catálogo")}
+            </span>
           </div>
           {outfit.description && <p className="outfit-description">{outfit.description}</p>}
           {outfit.explanation && <p className="outfit-explanation">{outfit.explanation}</p>}
@@ -179,57 +181,26 @@ export default function App() {
             <div className="section-heading">
               <div>
                 <p className="eyebrow">PASO 02</p>
-                <h2>Outfits recuperados y looks generados</h2>
+                <h2>Recomendaciones</h2>
               </div>
+              {results.generation_status === "generated" ? (
+                <span className="generation-status success">Sugerencias listas</span>
+              ) : (
+                <span className="generation-status fallback">Resultados del catálogo</span>
+              )}
             </div>
 
-            <div className="results-stages">
-              <section className="results-stage">
-                <div className="results-stage-heading">
-                  <div>
-                    <p className="eyebrow">RETRIEVAL</p>
-                    <h2>Outfits encontrados en el catálogo</h2>
-                    <p>Estos outfits se recuperaron y se usaron como contexto para la generación.</p>
-                  </div>
-                  <span className="result-count">{results.retrieved_outfits?.length || 0} outfits</span>
-                </div>
-                <OutfitCards
-                  outfits={results.retrieved_outfits || []}
-                  emptyMessage="No encontramos outfits disponibles para esta consulta."
-                />
-              </section>
+            {results.explanation && (
+              <div className="explanation">
+                <span className="explanation-mark">✳</span>
+                <p>{results.explanation}</p>
+              </div>
+            )}
 
-              <section className="results-stage">
-                <div className="results-stage-heading">
-                  <div>
-                    <p className="eyebrow">GENERATOR</p>
-                    <h2>Looks combinados</h2>
-                    <p>Combinaciones nuevas creadas a partir de prendas de los outfits recuperados.</p>
-                  </div>
-                  <span className={`generation-status ${results.generation_status === "generated" ? "success" : "fallback"}`}>
-                    {results.generation_status === "generated" ? "Generados" : "No hubo generación"}
-                  </span>
-                </div>
-                {results.generation_status === "generated" ? (
-                  <>
-                    {results.explanation && (
-                      <div className="explanation">
-                        <span className="explanation-mark">✳</span>
-                        <p>{results.explanation}</p>
-                      </div>
-                    )}
-                    <OutfitCards
-                      outfits={results.recommendations || []}
-                      emptyMessage="El Generator no devolvió combinaciones para esta consulta."
-                    />
-                  </>
-                ) : (
-                  <div className="empty-state">
-                    {results.explanation || "El Generator no produjo looks; podés explorar los outfits recuperados arriba."}
-                  </div>
-                )}
-              </section>
-            </div>
+            <OutfitCards
+              outfits={results.recommendations || []}
+              emptyMessage="No encontramos outfits disponibles para esta consulta."
+            />
           </section>
         )}
       </main>

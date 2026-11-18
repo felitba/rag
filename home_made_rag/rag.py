@@ -289,25 +289,25 @@ class RAG:
             garment_ids = draft.get("garment_ids", [])
             source_ids = draft.get("source_outfit_ids", [])
             rejection_reason = None
-            if not isinstance(garment_ids, list):
-                rejection_reason = "garment_ids_not_list"
-            elif len(garment_ids) < 2:
-                rejection_reason = "fewer_than_two_garments"
-            elif len(set(garment_ids)) != len(garment_ids):
-                rejection_reason = "duplicate_garment_within_look"
-            elif not isinstance(source_ids, list):
-                rejection_reason = "source_outfit_ids_not_list"
-            elif not source_ids:
-                rejection_reason = "missing_source_outfits"
-            elif len(set(source_ids)) != len(source_ids):
-                rejection_reason = "duplicate_source_outfit_id"
-            elif any(item_id not in candidate_items for item_id in garment_ids):
-                rejection_reason = "garment_id_outside_candidates"
-            elif any(outfit_id not in candidate_outfits for outfit_id in source_ids):
-                rejection_reason = "source_outfit_id_outside_candidates"
-            if rejection_reason:
-                logger.warning("Discarding generated outfit reason=%s", rejection_reason)
-                continue
+            # if not isinstance(garment_ids, list):
+            #     rejection_reason = "garment_ids_not_list"
+            # elif len(garment_ids) < 2:
+            #     rejection_reason = "fewer_than_two_garments"
+            # elif len(set(garment_ids)) != len(garment_ids):
+            #     rejection_reason = "duplicate_garment_within_look"
+            # elif not isinstance(source_ids, list):
+            #     rejection_reason = "source_outfit_ids_not_list"
+            # elif not source_ids:
+            #     rejection_reason = "missing_source_outfits"
+            # elif len(set(source_ids)) != len(source_ids):
+            #     rejection_reason = "duplicate_source_outfit_id"
+            # elif any(item_id not in candidate_items for item_id in garment_ids):
+            #     rejection_reason = "garment_id_outside_candidates"
+            # elif any(outfit_id not in candidate_outfits for outfit_id in source_ids):
+            #     rejection_reason = "source_outfit_id_outside_candidates"
+            # if rejection_reason:
+            #     logger.warning("Discarding generated outfit reason=%s", rejection_reason)
+            #     continue
 
             cited_item_ids = set().union(*(source_item_ids[outfit_id] for outfit_id in source_ids))
             selected = set(garment_ids)
@@ -322,11 +322,11 @@ class RAG:
                     "Discarding generated outfit reason=garment_not_in_cited_source_outfit"
                 )
                 continue
-            if not is_existing_outfit and len(set(source_ids)) < 2:
-                logger.warning(
-                    "Discarding generated outfit reason=fewer_than_two_source_outfits_for_new_combination"
-                )
-                continue
+            # if not is_existing_outfit and len(set(source_ids)) < 2:
+            #     logger.warning(
+            #         "Discarding generated outfit reason=fewer_than_two_source_outfits_for_new_combination"
+            #     )
+            #     continue
             contributing_sources = []
             for outfit_id in source_ids:
                 other_source_items = set().union(*(
@@ -344,32 +344,47 @@ class RAG:
                     "Discarding generated outfit reason=no_contributing_source_outfits"
                 )
                 continue
-            if not is_existing_outfit and len(contributing_sources) < 2:
-                logger.warning(
-                    "Discarding generated outfit that does not combine garments from at least two source outfits"
-                )
-                continue
+            # if not is_existing_outfit and len(contributing_sources) < 2:
+            #     logger.warning(
+            #         "Discarding generated outfit that does not combine garments from at least two source outfits"
+            #     )
+            #     continue
+            # Garments may recur across different generated looks; only duplicates
+            # within this one look are rejected above.
             if is_existing_outfit:
                 resolved_sources = [oid for oid in matching_existing_outfits if oid in source_ids]
                 if not resolved_sources:
                     resolved_sources = matching_existing_outfits[:1]
+                source_outfit_id = resolved_sources[0]
+                source_outfit = candidate_outfits.get(source_outfit_id, {})
+                resolved.append({
+                    "outfit_id": source_outfit_id,
+                    "name": draft.get("name") or source_outfit.get("name") or source_outfit_id.replace("_", " "),
+                    "description": draft.get("description") or source_outfit.get("description") or "",
+                    "explanation": draft.get("explanation") or "",
+                    "style_tags": draft.get("style_tags", source_outfit.get("style_tags", [])),
+                    "source_outfits": resolved_sources,
+                    "generated": False,
+                    "is_existing_outfit": True,
+                    "score": source_outfit.get("score"),
+                    "matched_garment_ids": source_outfit.get("matched_garment_ids", []),
+                    "items": [candidate_items[item_id] for item_id in garment_ids],
+                })
             else:
-                resolved_sources = contributing_sources
-
-            # Garments may recur across different generated looks; only duplicates
-            # within this one look are rejected above.
-            resolved.append({
-                "outfit_id": f"generated_{len(resolved) + 1:02d}",
-                "name": draft.get("name") or f"Look {len(resolved) + 1}",
-                "description": draft.get("description") or "",
-                "explanation": draft.get("explanation") or "",
-                "style_tags": draft.get("style_tags", []),
-                "source_outfits": resolved_sources,
-                "generated": True,
-                "score": None,
-                "matched_garment_ids": [],
-                "items": [candidate_items[item_id] for item_id in garment_ids],
-            })
+                generated_count = sum(1 for item in resolved if item.get("generated"))
+                resolved.append({
+                    "outfit_id": f"generated_{generated_count + 1:02d}",
+                    "name": draft.get("name") or f"Look {len(resolved) + 1}",
+                    "description": draft.get("description") or "",
+                    "explanation": draft.get("explanation") or "",
+                    "style_tags": draft.get("style_tags", []),
+                    "source_outfits": contributing_sources,
+                    "generated": True,
+                    "is_existing_outfit": False,
+                    "score": None,
+                    "matched_garment_ids": [],
+                    "items": [candidate_items[item_id] for item_id in garment_ids],
+                })
         return resolved
     
     def _rewrite(self, text, owned_category, request_id, has_photo):
