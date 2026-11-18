@@ -195,11 +195,11 @@ def main():
     print(f"\nSaved {output}")
     
     try:
-        import plot_evaluation
+        from plot_evaluation import plot_retrieval
     except ImportError as error:
         print(f"Figures skipped: {error}")
     else:
-        plot_evaluation.main()
+        plot_retrieval(report)
 
 
 

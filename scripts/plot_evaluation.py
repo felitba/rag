@@ -1,13 +1,14 @@
 """Figures for the RAG evaluation studies.
 
 One function per study, each taking the JSON payload written by the matching
-script in scripts/.  Run this file directly to plot either judged study; later
+script in scripts/.  Run this file directly to plot any completed study; later
 studies can add their own functions (the other evaluation scripts already look
 for plot_retrieval and plot_faithfulness).
 
 Usage:
     python scripts/plot_evaluation.py [--input logs/judged_context_precision_30.json]
     python scripts/plot_evaluation.py --study text_rewrite --input logs/judged_text_rewrite_30.json
+    python scripts/plot_evaluation.py --study generator_inputs --input logs/generator_inputs_30.json
 """
 from __future__ import annotations
 
@@ -174,24 +175,92 @@ def plot_judged_text_rewrite(report: dict[str, Any], output: Path | None = None)
     return target
 
 
+def plot_generator_inputs(report: dict[str, Any], output: Path | None = None) -> Path:
+    """Compare generation with metadata only against metadata plus retrieved photos."""
+    summary = report["summary"]
+    conditions = ("metadata_only", "with_images")
+    labels = {"metadata_only": "metadata only", "with_images": "with retrieved images"}
+    if not all(condition in summary for condition in conditions):
+        raise ValueError("Old log schema: re-run scripts/evaluate_generator_inputs.py first")
+    values = [summary[condition]["mean_compatibility_score"] for condition in conditions]
+    if any(value is None for value in values):
+        raise ValueError("No compatibility scores in this log; re-run the study")
+
+    fig, ax = plt.subplots(figsize=(8, 5.8))
+    palette = plt.get_cmap("tab10").colors
+    bars = ax.bar(range(len(conditions)), values, width=0.55,
+                  color=[palette[0], palette[1]])
+    ax.bar_label(bars, fmt="%.3f", padding=3, fontsize=10)
+    ax.set_xticks(range(len(conditions)), [labels[condition] for condition in conditions])
+    low = min(0.0, min(values))
+    high = max(values)
+    span = max(0.1, high - low)
+    ax.set_ylim(low - 0.02 * span, high + 0.16 * span)
+    ax.set_ylabel("Type-aware compatibility score (higher is better)")
+    ax.set_title("Does showing retrieved photos improve generated outfits?")
+    ax.grid(axis="y", alpha=0.25)
+
+    change = summary.get("change_vs_metadata_only") or {}
+    if change.get("mean") is not None:
+        text = [
+            "Paired change vs metadata only",
+            f"mean {change['mean']:+.3f} +/- {change['se']:.3f}",
+            f"{change['improved']} up / {change['worsened']} down "
+            f"/ {change['unchanged']} unchanged (n={change['n']})",
+        ]
+        ax.text(0.98, 0.97, "\n".join(text), transform=ax.transAxes,
+                ha="right", va="top", fontsize=9,
+                bbox={"boxstyle": "round,pad=0.4", "fc": "white", "ec": "#cccccc", "alpha": 0.95})
+
+    cost = summary.get("cost", {}).get("total", {}).get("cost_usd")
+    details = [f"{summary.get('queries', '?')} requests",
+               f"max_images={summary.get('max_images', '?')}",
+               f"model={summary.get('model', '?')}"]
+    if cost is not None:
+        details.append(f"cost=${cost:.4f}")
+    fig.suptitle("Generator input ablation - " + ", ".join(details), fontsize=11)
+    fig.tight_layout(rect=(0, 0.02, 1, 0.93))
+    if report.get("_source"):
+        fig.text(0.01, 0.01, f"Source: {report['_source']}", fontsize=8, color="#666666")
+
+    target = output or REPORTS / f"generator_inputs_compatibility_{query_count(report, 'generator_inputs')}.png"
+    target = target if target.is_absolute() else REPO / target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(target, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved {target}")
+    return target
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--input", type=Path, help="Study JSON (default: newest log for the chosen study)")
     parser.add_argument("--output", type=Path, help="PNG path (default: reports/<study>_<N>.png)")
-    parser.add_argument("--study", choices=("context_precision", "text_rewrite"), default=None,
+    parser.add_argument("--study", choices=("context_precision", "text_rewrite", "generator_inputs"), default=None,
                         help="Figure to draw (default: inferred from --input, else context_precision)")
     args = parser.parse_args()
 
     if args.study is None:
-        study = "text_rewrite" if args.input and "judged_text_rewrite" in args.input.name else "context_precision"
+        name = args.input.name if args.input else ""
+        if "judged_text_rewrite" in name:
+            study = "text_rewrite"
+        elif "generator_inputs" in name:
+            study = "generator_inputs"
+        else:
+            study = "context_precision"
     else:
         study = args.study
-    source = args.input or latest_report(
-        "judged_text_rewrite_*.json" if study == "text_rewrite" else "judged_context_precision_*.json"
-    )
+    patterns = {
+        "context_precision": "judged_context_precision_*.json",
+        "text_rewrite": "judged_text_rewrite_*.json",
+        "generator_inputs": "generator_inputs_*.json",
+    }
+    source = args.input or latest_report(patterns[study])
     report = load_report(source)
     if study == "text_rewrite":
         plot_judged_text_rewrite(report, args.output)
+    elif study == "generator_inputs":
+        plot_generator_inputs(report, args.output)
     else:
         plot_judged_context_precision(report, args.output)
 

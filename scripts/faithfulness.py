@@ -135,11 +135,11 @@ def main():
     print(f"Saved {output}")
 
     try:
-        import plot_evaluation
+        from plot_evaluation import plot_faithfulness
     except ImportError as error:
         print(f"Figure skipped: {error}")
     else:
-        plot_evaluation.plot_faithfulness(report)
+        plot_faithfulness(report)
 
 
 if __name__ == "__main__":
