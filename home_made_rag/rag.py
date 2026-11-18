@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 from contextlib import contextmanager
 
@@ -33,6 +34,15 @@ def timed(timings, stage):
         if timings is not None:
             elapsed_ms = (time.perf_counter() - started) * 1000
             timings[stage] = round(timings.get(stage, 0.0) + elapsed_ms, 1)
+
+
+# Catalog identifiers the model may still write into its prose, e.g. "(204946370)".
+ID_IN_TEXT = re.compile(r"\s*\((?:\s*\d{6,}\s*,?)+\)|\s*\b\d{6,}\b")
+
+
+def without_ids(text):
+    """Remove garment and outfit IDs from text the shopper reads."""
+    return re.sub(r"\s+([,.;:])", r"\1", ID_IN_TEXT.sub("", text or "")).strip()
 
 
 # Categories where a look can hold one garment only.
@@ -168,13 +178,20 @@ class RAG:
                 query_embedding = self.embedding.embed_image(query_image)
             with timed(timings, "retrieval"):
                 matches = self._search(query_embedding, CONFIG["vector_store"]["top_k"])
+            # Negative rejection: if even the closest garment is far from the photo,
+            # the photo is not a garment of this catalog. null in the config disables it.
+            floor = CONFIG["retrieval"].get("minimum_similarity")
+            best = 1 - matches[0]["distance"] if matches else 0.0
+            if floor is not None and best < floor:
+                logger.info("Photo rejected: best cosine %.3f < floor %.3f", best, floor)
+                raise OutOfScopeRequest(f"photo: best cosine {best:.3f} < {floor}")
             if query_attributes is None:
                 with timed(timings, "attributes"):
                     query_attributes = self.classify_query_image(query_image)
         elif not text:
             raise ValueError("Se necesita una imagen o un texto para recomendar")
         
-        text_queries, rewriting_trace = [], None
+        text_queries, rewriting_trace, text_matches = [], None, []
         if text:
             owned_category = ((query_attributes or {}).get("category") or {}).get("label")
             with timed(timings, "rewriting"):
@@ -187,6 +204,11 @@ class RAG:
                     raise OutOfScopeRequest(text)
                 with timed(timings, "retrieval"):
                     matches = self._search_text(text_queries)
+            elif text_queries:
+                # Photo + text: the photo already retrieved its garments; each text query
+                # retrieves its own, so outfits that fit the words enter the candidates too.
+                with timed(timings, "retrieval"):
+                    text_matches = self._search_text(text_queries)
 
         retrieved_precision = evaluate_context_precision(matches, query_attributes, self.catalog)
         matches = retrieved_precision["annotated_matches"]
@@ -225,9 +247,26 @@ class RAG:
         with timed(timings, "outfits"):
             if text_queries:
                 candidates = self._collect_outfits(matches, None)
-                outfits = self._rank_by_text(candidates, text_queries, has_photo=image_path is not None)[:limit]
+                if image_path is not None:
+                    self._mark_photo_garments(candidates)
+                if text_matches:
+                    known = {outfit["outfit_id"] for outfit in candidates}
+                    for outfit in candidates:
+                        outfit["found_by"] = "photo"
+                    for outfit in self._collect_outfits(text_matches, None):
+                        if outfit["outfit_id"] not in known:
+                            # Its photo score is computed in _rank_by_text.
+                            outfit.update(found_by="text", score=None, matched_garment_ids=[], match_details=[])
+                            candidates.append(outfit)
+                ranked = self._rank_by_text(
+                    candidates, text_queries, has_photo=image_path is not None,
+                    photo_embedding=query_embedding if image_path is not None else None,
+                    query_attributes=query_attributes,
+                )
+                outfits = self._keep_photo_share(ranked, limit) if text_matches else ranked[:limit]
             else:
                 candidates = self._collect_outfits(matches, None)
+                self._mark_photo_garments(candidates)
                 outfits = candidates[:limit]
         if trace is not None:
             trace["outfit_hop"] = self._outfit_hop_trace(
@@ -301,9 +340,11 @@ class RAG:
                 {
                     "outfit_id": outfit["outfit_id"],
                     "kept": outfit["outfit_id"] in kept_ids,
+                    "found_by": outfit.get("found_by"),
                     "score": outfit.get("score"),
                     "photo_score": outfit.get("photo_score"),
                     "text_score": outfit.get("text_score"),
+                    "text_score_scaled": outfit.get("text_score_scaled"),
                     "garment_count": len(outfit.get("items", [])),
                     "matches": outfit.get("match_details", []),
                 }
@@ -374,15 +415,26 @@ class RAG:
                     request_id=request_id,
                     validate_output=validate_generated_output,
                     attempt_log=attempts,
+                    photo=self._photo_summary(query_attributes) if image_path is not None else None,
                 )
             recommendations = resolved_recommendations
             self._record_generator_outfits(request_id, "generator_output", recommendations)
-            explanation = generated.get("explanation") or "Sugerencias nuevas basadas en prendas de los outfits recuperados."
+            explanation = without_ids(generated.get("explanation")) or "Sugerencias nuevas basadas en prendas de los outfits recuperados."
             return recommendations, explanation, "generated", retrieved, query_attributes, context_precision
         except Exception:
             logger.exception("Outfit generation failed; returning retrieved recommendations")
             self._record_generator_outfits(request_id, "generator_output", retrieved)
             return retrieved, "La generación no estuvo disponible; mostramos los outfits recuperados del catálogo.", "fallback", retrieved, query_attributes, context_precision
+
+    @staticmethod
+    def _photo_summary(query_attributes):
+        """What was detected in the shopper's photo, for the generator (it gets no image)."""
+        attributes = query_attributes or {}
+        summary = {
+            "category": (attributes.get("category") or {}).get("label"),
+            "color": (attributes.get("color") or {}).get("color"),
+        }
+        return {key: value for key, value in summary.items() if value} or None
 
     def _record_generator_outfits(self, request_id, stage, outfits):
         if not self.monitor:
@@ -408,6 +460,12 @@ class RAG:
             garment_id
             for outfit in candidates
             for garment_id in outfit.get("matched_garment_ids", [])
+        }
+        # Garments the photo retrieved (empty for a text-only request).
+        photo_garment_ids = {
+            garment_id
+            for outfit in candidates
+            for garment_id in outfit.get("photo_garment_ids", [])
         }
         resolved = []
         verdicts = []
@@ -544,17 +602,22 @@ class RAG:
                     verdict["reason"] = "repeated_body_slot"
                     continue
 
-            verdict.update(accepted=True, look_kind=look_kind, source_outfits=resolved_sources)
+            has_photo_garment = bool(selected & photo_garment_ids) if photo_garment_ids else None
+            verdict.update(
+                accepted=True, look_kind=look_kind, source_outfits=resolved_sources,
+                has_photo_garment=has_photo_garment,
+            )
             verdicts.append(verdict)
             # Garments may recur across different generated looks; only duplicates
             # within this one look are rejected above.
             resolved.append({
                 "outfit_id": f"generated_{len(resolved) + 1:02d}",
                 "name": draft.get("name") or f"Look {len(resolved) + 1}",
-                "description": draft.get("description") or "",
-                "explanation": draft.get("explanation") or "",
-                "changes_from_source": draft.get("changes_from_source") or "",
+                "description": without_ids(draft.get("description")),
+                "explanation": without_ids(draft.get("explanation")),
+                "changes_from_source": without_ids(draft.get("changes_from_source")),
                 "look_kind": look_kind,
+                "has_photo_garment": has_photo_garment,
                 "omitted_items": omitted_items,
                 "style_tags": draft.get("style_tags", []),
                 "source_outfits": resolved_sources,
@@ -564,10 +627,17 @@ class RAG:
                 "items": [candidate_items[item_id] for item_id in garment_ids],
             })
 
-        # More looks are requested than shown. New combinations go first, then complete
-        # real outfits; an outfit with garments removed only fills a slot left empty.
+        # More looks are requested than shown. With a photo, looks that include a garment
+        # like the photo go first. Then new combinations, then complete real outfits; an
+        # outfit with garments removed only fills a slot left empty.
         priority = {"mix": 0, "existing": 1, "trimmed": 2}
-        order = sorted(range(len(resolved)), key=lambda index: priority[resolved[index]["look_kind"]])
+        order = sorted(
+            range(len(resolved)),
+            key=lambda index: (
+                resolved[index]["has_photo_garment"] is False,
+                priority[resolved[index]["look_kind"]],
+            ),
+        )
         limit = self.generator.max_generated_outfits
         for index in order[limit:]:
             verdicts[index].update(accepted=False, reason="lower_priority_than_shown_looks")
@@ -624,12 +694,16 @@ class RAG:
         ]
         trace["photo_weight"] = settings.get("photo_weight", 0.5)
         trace["text_weight"] = settings.get("text_weight", 0.5)
+        trace["text_score_floor"] = settings.get("text_score_floor", 0.15)
+        trace["text_score_ceiling"] = settings.get("text_score_ceiling", 0.32)
         trace["ranking"] = [
             {
                 "outfit_id": outfit["outfit_id"],
                 "score": outfit.get("score"),
                 "text_score": outfit.get("text_score"),
                 "photo_score": outfit.get("photo_score"),
+                "text_score_scaled": outfit.get("text_score_scaled"),
+                "found_by": outfit.get("found_by"),
                 "matches": [
                     {**match, **(self._garment_label(match["garment_id"]) if match["garment_id"] else {})}
                     for match in outfit.get("text_matches", [])
@@ -661,12 +735,61 @@ class RAG:
                     best[match["item_id"]] = match
         return sorted(best.values(), key=lambda match: match["distance"])
 
-    def _rank_by_text(self, outfits, text_queries, has_photo):
+    @staticmethod
+    def _mark_photo_garments(outfits):
+        """Remember which garments the photo retrieved, before the text adds its own matches."""
+        for outfit in outfits:
+            outfit["photo_garment_ids"] = list(outfit["matched_garment_ids"])
+
+    @staticmethod
+    def _keep_photo_share(ranked, limit):
+        """Photo + text: at least half of the outfits passed on contain a garment like the photo.
+
+        Without this the text can fill every place, and the generator is left with no
+        garment similar to the one the shopper uploaded.
+        """
+        if limit is None:
+            return ranked
+        reserved = [outfit for outfit in ranked if outfit.get("found_by") == "photo"][: (limit + 1) // 2]
+        reserved_ids = {outfit["outfit_id"] for outfit in reserved}
+        rest = [outfit for outfit in ranked if outfit["outfit_id"] not in reserved_ids][: limit - len(reserved)]
+        return sorted(reserved + rest, key=lambda outfit: outfit["score"], reverse=True)
+
+    def _photo_score(self, outfit, photo_embedding, query_attributes, vectors):
+        """Hybrid score (cosine, colour, category) of the outfit's garment closest to the photo.
+
+        Outfits found through the text were not in the photo's top-k, so they are scored
+        here with the same formula the reranker applied to the photo's own matches.
+        """
+        pseudo_matches = []
+        for item in outfit["items"]:
+            record = self.catalog.items[item["garment_id"]]
+            pseudo_matches.append({
+                "item_id": item["garment_id"],
+                "distance": 1 - float(np.dot(photo_embedding, vectors[item["garment_id"]])),
+                **{key: record.get(key) for key in ("category", "color", "color_confidence", "color_r", "color_g", "color_b")},
+            })
+        best = self.hybrid_reranker.rerank(pseudo_matches, query_attributes)[0]
+        outfit["match_details"] = [{
+            "garment_id": best["item_id"],
+            "rank": None,
+            "score": best["rerank_score"],
+            "cosine_similarity": round(1 - best["distance"], 6),
+            "category": best.get("category"),
+            "image_url": self.catalog.image_url(best["item_id"]),
+        }]
+        return best["rerank_score"]
+
+    def _rank_by_text(self, outfits, text_queries, has_photo, photo_embedding=None, query_attributes=None):
         """Score each candidate outfit by how well its garments cover the text queries."""
         if not outfits:
             return outfits
         garment_ids = {item["garment_id"] for outfit in outfits for item in outfit["items"]}
         vectors = self.chroma.get_embeddings(sorted(garment_ids))
+        if photo_embedding is not None:
+            for outfit in outfits:
+                if outfit.get("score") is None:
+                    outfit["score"] = self._photo_score(outfit, photo_embedding, query_attributes, vectors)
 
         for outfit in outfits:
             similarities = []
@@ -699,27 +822,25 @@ class RAG:
 
         if has_photo:
             settings = CONFIG.get("query_rewriting", {})
-            photo = self._min_max([outfit["score"] for outfit in outfits])
-            words = self._min_max([outfit["text_score"] for outfit in outfits])
-            for outfit, photo_score, text_score in zip(outfits, photo, words):
+            # CLIP text-to-image similarities live in a narrow band (about 0.15 to 0.32 on
+            # this catalog), while the photo score already spans 0 to 1. The text score is
+            # mapped onto 0 to 1 with fixed bounds, not with the min and max of this request:
+            # stretching the candidates' own range turns differences of 0.01 into the whole scale.
+            floor = settings.get("text_score_floor", 0.15)
+            ceiling = settings.get("text_score_ceiling", 0.32)
+            for outfit in outfits:
+                scaled = min(1.0, max(0.0, (outfit["text_score"] - floor) / (ceiling - floor)))
                 outfit["photo_score"] = outfit["score"]
+                outfit["text_score_scaled"] = round(scaled, 6)
                 outfit["score"] = round(
-                    settings.get("photo_weight", 0.5) * photo_score
-                    + settings.get("text_weight", 0.5) * text_score,
+                    settings.get("photo_weight", 0.5) * outfit["photo_score"]
+                    + settings.get("text_weight", 0.5) * scaled,
                     6,
                 )
         else:
             for outfit in outfits:
                 outfit["score"] = outfit["text_score"]
         return sorted(outfits, key=lambda outfit: outfit["score"], reverse=True)
-
-    @staticmethod
-    def _min_max(values):
-        low, high = min(values), max(values)
-        if high - low < 1e-9:
-            return [1.0 for _ in values]
-        return [(value - low) / (high - low) for value in values]
-
 
     def _search(self, query_embedding, top_k,where=None):
         result = self.chroma.retrieve(query_embedding, top_k=top_k, where=where)

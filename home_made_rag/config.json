@@ -48,9 +48,9 @@
   },
   "hybrid_reranker": {
     "weights": {
-      "cosine_similarity": 0.5,
-      "color": 0.25,
-      "category": 0.25
+      "cosine_similarity": 0.85,
+      "color": 0.05,
+      "category": 0.1
     },
     "color_similarity": {
       "delta_e_scale": 40.0,
@@ -70,7 +70,7 @@
     "max_outfits": 5,
     "deduplicate_outfits": true,
     "exclude_query_item": true,
-    "minimum_similarity": null
+    "minimum_similarity": 0.7
   },
     "query_rewriting": {
     "enabled": true,
@@ -78,7 +78,9 @@
     "mode": "auto",
     "category_filter": true,
     "photo_weight": 0.5,
-    "text_weight": 0.5
+    "text_weight": 0.5,
+    "text_score_floor": 0.15,
+    "text_score_ceiling": 0.32
   },
   "generator": {
     "enabled": true,

@@ -182,10 +182,10 @@ function routeSteps(config) {
     { step: "Embedding de la consulta", image: "CLIP de imagen", "image+text": "CLIP de imagen; el texto se embebe aparte", text: "CLIP de texto, uno por query" },
     { step: "Atributos de la foto", image: "categoría + color", "image+text": "categoría + color", text: null },
     { step: "Query rewriting (LLM)", image: null, "image+text": "sí; no repite la prenda de la foto", text: "sí; corta si el pedido no es de ropa" },
-    { step: "Retrieval", image: `${topK} prendas por la foto`, "image+text": `${topK} prendas por la foto; el texto no busca`, text: `${topK} por query, con filtro de categoría si la query la nombra; se unen` },
+    { step: "Retrieval", image: `${topK} prendas por la foto`, "image+text": `${topK} prendas por la foto + ${topK} por cada query de texto; se unen los outfits`, text: `${topK} por query, con filtro de categoría si la query la nombra; se unen` },
     { step: "Reranking híbrido", image: hybrid, "image+text": hybrid, text: "sin efecto: no hay atributos, queda solo el coseno", textMuted: true },
     { step: "Context precision (proxy)", image: "se calcula", "image+text": "se calcula", text: null },
-    { step: "Orden de outfits", image: "puntaje de la mejor prenda", "image+text": `${mix}, reescalados 0–1`, text: "cobertura de las queries" },
+    { step: "Orden de outfits", image: "puntaje de la mejor prenda", "image+text": `${mix}; el texto se lleva a 0–1 con límites fijos`, text: "cobertura de las queries" },
     { step: "Generación (LLM)", image: "sin pedido de texto", "image+text": "con el pedido del usuario", text: "con el pedido del usuario" },
     { step: "Validación de la salida", image: "sí", "image+text": "sí", text: "sí" },
   ];
@@ -376,7 +376,7 @@ const HOP_RULES = {
   },
   photo_and_text: {
     short: "foto + texto",
-    text: "Foto y texto: el puntaje de la foto y el del texto se reescalan a 0–1 (min-max entre los outfits candidatos) y se combinan con los pesos configurados.",
+    text: "Foto y texto: los candidatos son los outfits que trajo la foto más los que trajo cada query de texto. Puntaje de foto = puntaje híbrido de la prenda del outfit más parecida a la foto. Puntaje de texto = cobertura de las queries, llevada a 0–1 con límites fijos (no con el mínimo y máximo de esta consulta, que convertía diferencias de 0,01 en toda la escala). Se combinan con los pesos configurados.",
   },
 };
 
@@ -506,23 +506,23 @@ function OutfitHop({ detail }) {
           <tr>
             <th>#</th><th>Outfit</th><th>Puntaje</th>
             {withText && <><th>Foto</th><th>Texto</th></>}
-            <th>Prendas</th><th>Prendas del ranking que lo trajeron (posición · puntaje)</th><th></th>
+            <th>Prendas</th><th>Prendas más cercanas a la consulta (posición · puntaje)</th><th></th>
           </tr>
         </thead>
         <tbody>
           {hop.outfits.map((outfit, index) => (
             <tr key={outfit.outfit_id} className={outfit.kept ? "" : "monitor-row-dropped"}>
               <td>{outfit.kept ? index + 1 : "—"}</td>
-              <td>{outfit.outfit_id}</td>
+              <td>{outfit.outfit_id}{outfit.found_by && <> <span className="monitor-chip">{outfit.found_by === "text" ? "por texto" : "por foto"}</span></>}</td>
               <td>{formatNumber(outfit.score, 3)}</td>
-              {withText && <><td>{outfit.photo_score == null ? "—" : formatNumber(outfit.photo_score, 3)}</td><td>{outfit.text_score == null ? "—" : formatNumber(outfit.text_score, 3)}</td></>}
+              {withText && <><td>{outfit.photo_score == null ? "—" : formatNumber(outfit.photo_score, 3)}</td><td>{outfit.text_score == null ? "—" : formatNumber(outfit.text_score, 3)}{outfit.text_score_scaled != null && ` → ${formatNumber(outfit.text_score_scaled, 2)}`}</td></>}
               <td>{formatNumber(outfit.garment_count)}</td>
               <td>
                 <span className="monitor-hop-matches">
                   {(outfit.matches || []).map((match) => (
                     <span key={match.garment_id} title={`${match.garment_id} · ${match.category || ""} · coseno ${formatNumber(match.cosine_similarity, 3)}`}>
                       <img src={`${API_BASE}${match.image_url}`} alt="" loading="lazy" />
-                      #{match.rank} · {formatNumber(match.score, 3)}
+                      {match.rank ? `#${match.rank} · ` : ""}{formatNumber(match.score, 3)}
                     </span>
                   ))}
                 </span>

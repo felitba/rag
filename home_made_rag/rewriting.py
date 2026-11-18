@@ -119,7 +119,9 @@ class QueryRewriter:
         )
         mode = self.mode
         if mode == "auto":
-            mode = "literal" if has_photo else "decompose"
+            # One query per garment in both routes: a single general query ("elegant night
+            # outfit") scores every outfit almost the same, so it cannot rank them.
+            mode = "decompose"
         system_message = SYSTEM_MESSAGE.format(
             mode=MODES[mode].format(max_queries=self.max_queries),
             categories=", ".join(categories),
